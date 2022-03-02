@@ -21,6 +21,7 @@ import org.testng.annotations.AfterClass;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import static io.trino.plugin.exchange.containers.MinioStorage.getExchangeManagerProperties;
 import static io.trino.testing.sql.TestTable.randomTableSuffix;
