@@ -14,12 +14,12 @@
 package io.trino.plugin.iceberg.catalog.hms;
 
 import io.trino.plugin.hive.authentication.HiveIdentity;
-import io.trino.plugin.hive.metastore.HiveMetastore;
+import io.trino.plugin.hive.metastore.AcidTransactionOwner;
 import io.trino.plugin.hive.metastore.MetastoreUtil;
 import io.trino.plugin.hive.metastore.PrincipalPrivileges;
 import io.trino.plugin.hive.metastore.Table;
+import io.trino.plugin.hive.metastore.cache.CachingHiveMetastore;
 import io.trino.plugin.hive.metastore.thrift.ThriftMetastore;
-import io.trino.plugin.iceberg.catalog.AbstractMetastoreTableOperations;
 import io.trino.spi.connector.ConnectorSession;
 import io.trino.spi.connector.TableNotFoundException;
 import org.apache.iceberg.TableMetadata;
@@ -45,7 +45,7 @@ public class HiveMetastoreTableOperations
 
     public HiveMetastoreTableOperations(
             FileIO fileIo,
-            HiveMetastore metastore,
+            CachingHiveMetastore metastore,
             ThriftMetastore thriftMetastore,
             ConnectorSession session,
             String database,
@@ -65,6 +65,7 @@ public class HiveMetastoreTableOperations
 
         long lockId = thriftMetastore.acquireTableExclusiveLock(
                 identity,
+                new AcidTransactionOwner(session.getUser()),
                 session.getQueryId(),
                 database,
                 tableName);
@@ -87,20 +88,15 @@ public class HiveMetastoreTableOperations
                         .setParameter(METADATA_LOCATION_PROP, newMetadataLocation)
                         .setParameter(PREVIOUS_METADATA_LOCATION_PROP, currentMetadataLocation)
                         .build();
+
+                // todo privileges should not be replaced for an alter
+                PrincipalPrivileges privileges = table.getOwner().map(MetastoreUtil::buildInitialPrivilegeSet).orElse(NO_PRIVILEGES);
+                metastore.replaceTable(database, tableName, table, privileges);
             }
             catch (RuntimeException e) {
-                try {
-                    io().deleteFile(newMetadataLocation);
-                }
-                catch (RuntimeException ex) {
-                    e.addSuppressed(ex);
-                }
-                throw e;
+                // CommitFailedException is handled as a special case in the Iceberg library. This commit will automatically retry
+                throw new CommitFailedException(e, "Failed to commit to table %s.%s", database, tableName);
             }
-
-            // todo privileges should not be replaced for an alter
-            PrincipalPrivileges privileges = table.getOwner().map(MetastoreUtil::buildInitialPrivilegeSet).orElse(NO_PRIVILEGES);
-            metastore.replaceTable(database, tableName, table, privileges);
         }
         finally {
             thriftMetastore.releaseTableLock(identity, lockId);

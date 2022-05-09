@@ -40,8 +40,8 @@ import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Optional;
 
-import static com.datastax.driver.core.utils.Bytes.toHexString;
-import static com.datastax.driver.core.utils.Bytes.toRawHexString;
+import static com.datastax.oss.driver.api.core.data.ByteUtils.toHexString;
+import static com.google.common.io.BaseEncoding.base16;
 import static io.trino.plugin.cassandra.CassandraQueryRunner.createCassandraQueryRunner;
 import static io.trino.plugin.cassandra.CassandraQueryRunner.createCassandraSession;
 import static io.trino.plugin.cassandra.TestCassandraTable.clusterColumn;
@@ -86,6 +86,9 @@ public class TestCassandraConnectorTest
     protected boolean hasBehavior(TestingConnectorBehavior connectorBehavior)
     {
         switch (connectorBehavior) {
+            case SUPPORTS_TRUNCATE:
+                return true;
+
             case SUPPORTS_CREATE_SCHEMA:
                 return false;
 
@@ -96,6 +99,7 @@ public class TestCassandraConnectorTest
                 return false;
 
             case SUPPORTS_ARRAY:
+            case SUPPORTS_ROW_TYPE:
                 return false;
 
             case SUPPORTS_ADD_COLUMN:
@@ -128,7 +132,7 @@ public class TestCassandraConnectorTest
         server = closeAfterClass(new CassandraServer());
         session = server.getSession();
         session.execute("CREATE KEYSPACE IF NOT EXISTS " + KEYSPACE + " WITH REPLICATION = {'class':'SimpleStrategy', 'replication_factor': 1}");
-        return createCassandraQueryRunner(server, ImmutableMap.of(), REQUIRED_TPCH_TABLES);
+        return createCassandraQueryRunner(server, ImmutableMap.of(), ImmutableMap.of(), REQUIRED_TPCH_TABLES);
     }
 
     @Override
@@ -231,7 +235,7 @@ public class TestCassandraConnectorTest
     public void testCharVarcharComparison()
     {
         assertThatThrownBy(super::testCharVarcharComparison)
-                .hasMessage("unsupported type: char(3)");
+                .hasMessage("Unsupported type: char(3)");
     }
 
     @Test
@@ -390,7 +394,7 @@ public class TestCassandraConnectorTest
                     " AND typesmallint = 7" +
                     " AND typeinteger = 7" +
                     " AND typelong = 1007" +
-                    " AND typebytes = from_hex('" + toRawHexString(ByteBuffer.wrap(Ints.toByteArray(7))) + "')" +
+                    " AND typebytes = from_hex('" + base16().encode(Ints.toByteArray(7)) + "')" +
                     " AND typedate = DATE '1970-01-01'" +
                     " AND typetimestamp = TIMESTAMP '1970-01-01 03:04:05Z'" +
                     " AND typeansi = 'ansi 7'" +
@@ -463,7 +467,7 @@ public class TestCassandraConnectorTest
                         rowNumber -> String.valueOf(rowNumber),
                         rowNumber -> String.valueOf(rowNumber),
                         rowNumber -> String.valueOf(rowNumber + 1000),
-                        rowNumber -> toHexString(ByteBuffer.wrap(Ints.toByteArray(rowNumber))),
+                        rowNumber -> toHexString(ByteBuffer.wrap(Ints.toByteArray(rowNumber)).asReadOnlyBuffer()),
                         rowNumber -> format("'%s'", DateTimeFormatter.ofPattern("uuuu-MM-dd").format(TIMESTAMP_VALUE)),
                         rowNumber -> format("'%s'", DateTimeFormatter.ofPattern("uuuu-MM-dd HH:mm:ss.SSSZ").format(TIMESTAMP_VALUE)),
                         rowNumber -> format("'ansi %d'", rowNumber),
@@ -1250,6 +1254,13 @@ public class TestCassandraConnectorTest
             assertEquals(execute("SELECT * FROM " + keyspaceAndTable).getRowCount(), 6);
             assertEquals(execute("SELECT * FROM " + keyspaceAndTable + whereMultiplePartitionKey).getRowCount(), 0);
         }
+    }
+
+    @Override
+    public void testDeleteWithLike()
+    {
+        assertThatThrownBy(super::testDeleteWithLike)
+                .hasStackTraceContaining("Delete without primary key or partition key is not supported");
     }
 
     @Override

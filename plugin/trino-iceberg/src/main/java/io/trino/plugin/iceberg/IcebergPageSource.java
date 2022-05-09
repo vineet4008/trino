@@ -13,66 +13,75 @@
  */
 package io.trino.plugin.iceberg;
 
+import com.google.common.collect.ImmutableList;
+import io.airlift.slice.Slice;
 import io.trino.plugin.hive.ReaderProjectionsAdapter;
+import io.trino.plugin.iceberg.delete.IcebergPositionDeletePageSink;
+import io.trino.plugin.iceberg.delete.TrinoRow;
 import io.trino.spi.Page;
 import io.trino.spi.TrinoException;
 import io.trino.spi.block.Block;
-import io.trino.spi.block.RunLengthEncodedBlock;
 import io.trino.spi.connector.ConnectorPageSource;
-import io.trino.spi.predicate.Utils;
+import io.trino.spi.connector.UpdatablePageSource;
 import io.trino.spi.type.Type;
+import org.apache.iceberg.data.DeleteFilter;
+import org.apache.iceberg.io.CloseableIterable;
+
+import javax.annotation.Nullable;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.util.Collection;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalLong;
+import java.util.concurrent.CompletableFuture;
+import java.util.function.Supplier;
 
+import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Throwables.throwIfInstanceOf;
 import static io.trino.plugin.base.util.Closables.closeAllSuppress;
 import static io.trino.plugin.iceberg.IcebergErrorCode.ICEBERG_BAD_DATA;
-import static io.trino.plugin.iceberg.IcebergUtil.deserializePartitionValue;
 import static java.util.Objects.requireNonNull;
 
 public class IcebergPageSource
-        implements ConnectorPageSource
+        implements UpdatablePageSource
 {
-    private final Block[] prefilledBlocks;
-    private final int[] delegateIndexes;
+    private final Type[] columnTypes;
+    private final int[] expectedColumnIndexes;
     private final ConnectorPageSource delegate;
     private final Optional<ReaderProjectionsAdapter> projectionsAdapter;
+    private final Optional<DeleteFilter<TrinoRow>> deleteFilter;
+    private final Supplier<IcebergPositionDeletePageSink> positionDeleteSinkSupplier;
+
+    @Nullable
+    private IcebergPositionDeletePageSink positionDeleteSink;
 
     public IcebergPageSource(
-            List<IcebergColumnHandle> columns,
-            Map<Integer, Optional<String>> partitionKeys,
+            List<IcebergColumnHandle> expectedColumns,
+            List<IcebergColumnHandle> requiredColumns,
             ConnectorPageSource delegate,
-            Optional<ReaderProjectionsAdapter> projectionsAdapter)
+            Optional<ReaderProjectionsAdapter> projectionsAdapter,
+            Optional<DeleteFilter<TrinoRow>> deleteFilter,
+            Supplier<IcebergPositionDeletePageSink> positionDeleteSinkSupplier)
     {
-        int size = requireNonNull(columns, "columns is null").size();
-        requireNonNull(partitionKeys, "partitionKeys is null");
-        this.delegate = requireNonNull(delegate, "delegate is null");
-
-        this.prefilledBlocks = new Block[size];
-        this.delegateIndexes = new int[size];
-        this.projectionsAdapter = requireNonNull(projectionsAdapter, "projectionsAdapter is null");
-
-        int outputIndex = 0;
-        int delegateIndex = 0;
-        for (IcebergColumnHandle column : columns) {
-            if (partitionKeys.containsKey(column.getId())) {
-                String partitionValue = partitionKeys.get(column.getId()).orElse(null);
-                Type type = column.getType();
-                Object prefilledValue = deserializePartitionValue(type, partitionValue, column.getName());
-                prefilledBlocks[outputIndex] = Utils.nativeValueToBlock(type, prefilledValue);
-                delegateIndexes[outputIndex] = -1;
-            }
-            else {
-                delegateIndexes[outputIndex] = delegateIndex;
-                delegateIndex++;
-            }
-            outputIndex++;
+        // expectedColumns should contain columns which should be in the final Page
+        // requiredColumns should include all expectedColumns as well as any columns needed by the DeleteFilter
+        requireNonNull(expectedColumns, "expectedColumns is null");
+        requireNonNull(requiredColumns, "requiredColumns is null");
+        this.expectedColumnIndexes = new int[expectedColumns.size()];
+        for (int i = 0; i < expectedColumns.size(); i++) {
+            checkArgument(expectedColumns.get(i).equals(requiredColumns.get(i)), "Expected columns must be a prefix of required columns");
+            expectedColumnIndexes[i] = i;
         }
+
+        this.columnTypes = requiredColumns.stream()
+                .map(IcebergColumnHandle::getType)
+                .toArray(Type[]::new);
+        this.delegate = requireNonNull(delegate, "delegate is null");
+        this.projectionsAdapter = requireNonNull(projectionsAdapter, "projectionsAdapter is null");
+        this.deleteFilter = requireNonNull(deleteFilter, "deleteFilter is null");
+        this.positionDeleteSinkSupplier = requireNonNull(positionDeleteSinkSupplier, "positionDeleteSinkSupplier is null");
     }
 
     @Override
@@ -110,22 +119,55 @@ public class IcebergPageSource
             if (dataPage == null) {
                 return null;
             }
-            int batchSize = dataPage.getPositionCount();
-            Block[] blocks = new Block[prefilledBlocks.length];
-            for (int i = 0; i < prefilledBlocks.length; i++) {
-                if (prefilledBlocks[i] != null) {
-                    blocks[i] = new RunLengthEncodedBlock(prefilledBlocks[i], batchSize);
+
+            if (deleteFilter.isPresent()) {
+                int positionCount = dataPage.getPositionCount();
+                int[] positionsToKeep = new int[positionCount];
+                try (CloseableIterable<TrinoRow> filteredRows = deleteFilter.get().filter(CloseableIterable.withNoopClose(TrinoRow.fromPage(columnTypes, dataPage, positionCount)))) {
+                    int positionsToKeepCount = 0;
+                    for (TrinoRow rowToKeep : filteredRows) {
+                        positionsToKeep[positionsToKeepCount] = rowToKeep.getPosition();
+                        positionsToKeepCount++;
+                    }
+                    dataPage = dataPage.getPositions(positionsToKeep, 0, positionsToKeepCount).getColumns(expectedColumnIndexes);
                 }
-                else {
-                    blocks[i] = dataPage.getBlock(delegateIndexes[i]);
+                catch (IOException e) {
+                    throw new TrinoException(ICEBERG_BAD_DATA, "Failed to filter rows during merge-on-read operation", e);
                 }
             }
-            return new Page(batchSize, blocks);
+
+            return dataPage;
         }
         catch (RuntimeException e) {
             closeWithSuppression(e);
             throwIfInstanceOf(e, TrinoException.class);
             throw new TrinoException(ICEBERG_BAD_DATA, e);
+        }
+    }
+
+    @Override
+    public void deleteRows(Block rowIds)
+    {
+        if (positionDeleteSink == null) {
+            positionDeleteSink = positionDeleteSinkSupplier.get();
+        }
+        positionDeleteSink.appendPage(new Page(rowIds));
+    }
+
+    @Override
+    public CompletableFuture<Collection<Slice>> finish()
+    {
+        if (positionDeleteSink != null) {
+            return positionDeleteSink.finish();
+        }
+        return CompletableFuture.completedFuture(ImmutableList.of());
+    }
+
+    @Override
+    public void abort()
+    {
+        if (positionDeleteSink != null) {
+            positionDeleteSink.abort();
         }
     }
 
@@ -149,7 +191,11 @@ public class IcebergPageSource
     @Override
     public long getMemoryUsage()
     {
-        return delegate.getMemoryUsage();
+        long memoryUsage = delegate.getMemoryUsage();
+        if (positionDeleteSink != null) {
+            memoryUsage += positionDeleteSink.getMemoryUsage();
+        }
+        return memoryUsage;
     }
 
     protected void closeWithSuppression(Throwable throwable)

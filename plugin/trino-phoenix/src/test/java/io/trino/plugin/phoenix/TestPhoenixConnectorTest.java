@@ -73,6 +73,7 @@ public class TestPhoenixConnectorTest
 
             case SUPPORTS_COMMENT_ON_TABLE:
             case SUPPORTS_COMMENT_ON_COLUMN:
+            case SUPPORTS_ADD_COLUMN_WITH_COMMENT:
                 return false;
 
             case SUPPORTS_RENAME_TABLE:
@@ -83,6 +84,9 @@ public class TestPhoenixConnectorTest
                 return false;
 
             case SUPPORTS_NOT_NULL_CONSTRAINT:
+                return false;
+
+            case SUPPORTS_ROW_TYPE:
                 return false;
 
             default:
@@ -157,10 +161,7 @@ public class TestPhoenixConnectorTest
     {
         assertThatThrownBy(super::testInsertArray)
                 // TODO (https://github.com/trinodb/trino/issues/6421) array with double null stored as array with 0
-                .hasMessageContaining("Actual rows (up to 100 of 1 extra rows shown, 2 rows in total):\n" +
-                        "    [0.0, null]\n" +
-                        "Expected rows (up to 100 of 1 missing rows shown, 2 rows in total):\n" +
-                        "    [null, null]");
+                .hasMessage("Phoenix JDBC driver replaced 'null' with '0.0' at index 1 in [0.0]");
     }
 
     @Override
@@ -273,6 +274,14 @@ public class TestPhoenixConnectorTest
         }
     }
 
+    @Override
+    public void testCharTrailingSpace()
+    {
+        assertThatThrownBy(super::testCharTrailingSpace)
+                .hasMessageContaining("The table does not have a primary key. tableName=TPCH.CHAR_TRAILING_SPACE");
+        throw new SkipException("Implement test for Phoenix");
+    }
+
     // Overridden because Phoenix requires a ROWID column
     @Override
     public void testCountDistinctWithStringTypes()
@@ -288,6 +297,13 @@ public class TestPhoenixConnectorTest
             assertQuery("SELECT count(DISTINCT t_char) FROM " + testTable.getName(), "VALUES 6");
             assertQuery("SELECT count(DISTINCT t_char), count(DISTINCT t_varchar) FROM " + testTable.getName(), "VALUES (6, 6)");
         }
+    }
+
+    @Override
+    public void testDeleteWithLike()
+    {
+        assertThatThrownBy(super::testDeleteWithLike)
+                .hasStackTraceContaining("TrinoException: Unsupported delete");
     }
 
     @Test

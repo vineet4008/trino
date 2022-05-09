@@ -208,6 +208,14 @@ public class ClassLoaderSafeConnectorMetadata
     }
 
     @Override
+    public void executeTableExecute(ConnectorSession session, ConnectorTableExecuteHandle tableExecuteHandle)
+    {
+        try (ThreadContextClassLoader ignored = new ThreadContextClassLoader(classLoader)) {
+            delegate.executeTableExecute(session, tableExecuteHandle);
+        }
+    }
+
+    @Override
     public Optional<ConnectorTableLayout> getLayoutForTableExecute(ConnectorSession session, ConnectorTableExecuteHandle tableExecuteHandle)
     {
         try (ThreadContextClassLoader ignored = new ThreadContextClassLoader(classLoader)) {
@@ -244,6 +252,14 @@ public class ClassLoaderSafeConnectorMetadata
     {
         try (ThreadContextClassLoader ignored = new ThreadContextClassLoader(classLoader)) {
             return delegate.getTableSchema(session, table);
+        }
+    }
+
+    @Override
+    public SchemaTableName getSchemaTableName(ConnectorSession session, ConnectorTableHandle table)
+    {
+        try (ThreadContextClassLoader ignored = new ThreadContextClassLoader(classLoader)) {
+            return delegate.getSchemaTableName(session, table);
         }
     }
 
@@ -308,6 +324,14 @@ public class ClassLoaderSafeConnectorMetadata
     {
         try (ThreadContextClassLoader ignored = new ThreadContextClassLoader(classLoader)) {
             return delegate.getTableStatistics(session, tableHandle, constraint);
+        }
+    }
+
+    @Override
+    public TableStatistics getTableStatistics(ConnectorSession session, ConnectorTableHandle tableHandle)
+    {
+        try (ThreadContextClassLoader ignored = new ThreadContextClassLoader(classLoader)) {
+            return delegate.getTableStatistics(session, tableHandle);
         }
     }
 
@@ -1036,6 +1060,22 @@ public class ClassLoaderSafeConnectorMetadata
     {
         try (ThreadContextClassLoader ignored = new ThreadContextClassLoader(classLoader)) {
             return delegate.isSupportedVersionType(session, tableName, pointerType, versioning);
+        }
+    }
+
+    @Override
+    public boolean supportsReportingWrittenBytes(ConnectorSession session, SchemaTableName schemaTableName, Map<String, Object> tableProperties)
+    {
+        try (ThreadContextClassLoader ignored = new ThreadContextClassLoader(classLoader)) {
+            return delegate.supportsReportingWrittenBytes(session, schemaTableName, tableProperties);
+        }
+    }
+
+    @Override
+    public boolean supportsReportingWrittenBytes(ConnectorSession session, ConnectorTableHandle connectorTableHandle)
+    {
+        try (ThreadContextClassLoader ignored = new ThreadContextClassLoader(classLoader)) {
+            return delegate.supportsReportingWrittenBytes(session, connectorTableHandle);
         }
     }
 }

@@ -70,8 +70,6 @@ import static java.util.concurrent.TimeUnit.SECONDS;
 import static java.util.stream.Collectors.joining;
 import static java.util.stream.IntStream.range;
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.testng.Assert.assertEquals;
-import static org.testng.Assert.assertFalse;
 import static org.testng.Assert.assertTrue;
 
 public class TestPostgreSqlConnectorTest
@@ -121,11 +119,15 @@ public class TestPostgreSqlConnectorTest
                 return true;
 
             case SUPPORTS_COMMENT_ON_TABLE:
+            case SUPPORTS_ADD_COLUMN_WITH_COMMENT:
                 return false;
 
             case SUPPORTS_ARRAY:
                 // Arrays are supported conditionally. Check the defaults.
                 return new PostgreSqlConfig().getArrayMapping() != PostgreSqlConfig.ArrayMapping.DISABLED;
+
+            case SUPPORTS_ROW_TYPE:
+                return false;
 
             case SUPPORTS_RENAME_TABLE_ACROSS_SCHEMAS:
                 return false;
@@ -158,16 +160,6 @@ public class TestPostgreSqlConnectorTest
                 onRemoteDatabase(),
                 "test_unsupported_column_present",
                 "(one bigint, two decimal(50,0), three varchar(10))");
-    }
-
-    @Test
-    public void testDropTable()
-    {
-        assertUpdate("CREATE TABLE test_drop AS SELECT 123 x", 1);
-        assertTrue(getQueryRunner().tableExists(getSession(), "test_drop"));
-
-        assertUpdate("DROP TABLE test_drop");
-        assertFalse(getQueryRunner().tableExists(getSession(), "test_drop"));
     }
 
     @Test
@@ -628,10 +620,11 @@ public class TestPostgreSqlConnectorTest
     @Test
     public void testDecimalPredicatePushdown()
     {
-        try (TestTable table = new TestTable(onRemoteDatabase(), "test_decimal_pushdown",
-                "(short_decimal decimal(9, 3), long_decimal decimal(30, 10))")) {
-            onRemoteDatabase().execute("INSERT INTO " + table.getName() + " VALUES (123.321, 123456789.987654321)");
-
+        try (TestTable table = new TestTable(
+                onRemoteDatabase(),
+                "test_decimal_pushdown",
+                "(short_decimal decimal(9, 3), long_decimal decimal(30, 10))",
+                List.of("123.321, 123456789.987654321"))) {
             assertThat(query("SELECT * FROM " + table.getName() + " WHERE short_decimal <= 124"))
                     .matches("VALUES (CAST(123.321 AS decimal(9,3)), CAST(123456789.987654321 AS decimal(30, 10)))")
                     .isFullyPushedDown();
@@ -659,12 +652,13 @@ public class TestPostgreSqlConnectorTest
     @Test
     public void testCharPredicatePushdown()
     {
-        try (TestTable table = new TestTable(onRemoteDatabase(), "test_char_pushdown",
-                "(char_1 char(1), char_5 char(5), char_10 char(10))")) {
-            onRemoteDatabase().execute("INSERT INTO " + table.getName() + " VALUES" +
-                    "('0', '0'    , '0'         )," +
-                    "('1', '12345', '1234567890')");
-
+        try (TestTable table = new TestTable(
+                onRemoteDatabase(),
+                "test_char_pushdown",
+                "(char_1 char(1), char_5 char(5), char_10 char(10))",
+                List.of(
+                        "'0', '0', '0'",
+                        "'1', '12345', '1234567890'"))) {
             assertThat(query("SELECT * FROM " + table.getName() + " WHERE char_1 = '0' AND char_5 = '0'"))
                     .matches("VALUES (CHAR'0', CHAR'0    ', CHAR'0         ')")
                     .isFullyPushedDown();
@@ -678,18 +672,21 @@ public class TestPostgreSqlConnectorTest
     }
 
     @Test
-    public void testCharTrailingSpace()
+    public void testOrPredicatePushdown()
     {
-        onRemoteDatabase().execute("CREATE TABLE char_trailing_space (x char(10))");
-        assertUpdate("INSERT INTO char_trailing_space VALUES ('test')", 1);
+        assertThat(query("SELECT * FROM nation WHERE nationkey != 3 OR regionkey = 4")).isFullyPushedDown();
+        assertThat(query("SELECT * FROM nation WHERE nationkey != 3 OR regionkey != 4")).isFullyPushedDown();
+        assertThat(query("SELECT * FROM nation WHERE name = 'ALGERIA' OR regionkey = 4")).isFullyPushedDown();
+        assertThat(query("SELECT * FROM nation WHERE name IS NULL OR regionkey = 4")).isFullyPushedDown();
+        assertThat(query("SELECT * FROM nation WHERE name = NULL OR regionkey = 4")).isNotFullyPushedDown(FilterNode.class); // TODO `name = NULL` should be eliminated by the engine
+    }
 
-        assertQuery("SELECT * FROM char_trailing_space WHERE x = char 'test'", "VALUES 'test'");
-        assertQuery("SELECT * FROM char_trailing_space WHERE x = char 'test  '", "VALUES 'test'");
-        assertQuery("SELECT * FROM char_trailing_space WHERE x = char 'test        '", "VALUES 'test'");
-
-        assertEquals(getQueryRunner().execute("SELECT * FROM char_trailing_space WHERE x = char ' test'").getRowCount(), 0);
-
-        assertUpdate("DROP TABLE char_trailing_space");
+    @Test
+    public void testArithmeticPredicatePushdown()
+    {
+        assertThat(query("SELECT nationkey, name, regionkey FROM nation WHERE nationkey > 0 AND (nationkey - regionkey) % nationkey = 2"))
+                .isFullyPushedDown()
+                .matches("VALUES (BIGINT '3', CAST('CANADA' AS varchar(25)), BIGINT '1')");
     }
 
     @Test
@@ -712,6 +709,105 @@ public class TestPostgreSqlConnectorTest
                     .isFullyPushedDown();
             assertThat(query("SELECT id FROM " + table.getName() + " WHERE a_varchar LIKE '%ą%'"))
                     .isFullyPushedDown();
+        }
+    }
+
+    @Test
+    public void testLikeWithEscapePredicatePushdown()
+    {
+        assertThat(query("SELECT nationkey FROM nation WHERE name LIKE '%A%' ESCAPE '\\'"))
+                .isFullyPushedDown();
+
+        try (TestTable table = new TestTable(
+                getQueryRunner()::execute,
+                "test_like_with_escape_predicate_pushdown",
+                "(id integer, a_varchar varchar(4))",
+                List.of(
+                        "1, 'A%b'",
+                        "2, 'Asth'",
+                        "3, 'ą%b'",
+                        "4, 'ąsth'"))) {
+            assertThat(query("SELECT id FROM " + table.getName() + " WHERE a_varchar LIKE '%A\\%%' ESCAPE '\\'"))
+                    .isFullyPushedDown();
+            assertThat(query("SELECT id FROM " + table.getName() + " WHERE a_varchar LIKE '%ą\\%%' ESCAPE '\\'"))
+                    .isFullyPushedDown();
+        }
+    }
+
+    @Test
+    public void testIsNullPredicatePushdown()
+    {
+        assertThat(query("SELECT nationkey FROM nation WHERE name IS NULL")).isFullyPushedDown();
+        assertThat(query("SELECT nationkey FROM nation WHERE name IS NULL OR regionkey = 4")).isFullyPushedDown();
+
+        try (TestTable table = new TestTable(
+                getQueryRunner()::execute,
+                "test_is_null_predicate_pushdown",
+                "(a_int integer, a_varchar varchar(1))",
+                List.of(
+                        "1, 'A'",
+                        "2, 'B'",
+                        "1, NULL",
+                        "2, NULL"))) {
+            assertThat(query("SELECT a_int FROM " + table.getName() + " WHERE a_varchar IS NULL OR a_int = 1")).isFullyPushedDown();
+        }
+    }
+
+    @Test
+    public void testIsNotNullPredicatePushdown()
+    {
+        assertThat(query("SELECT nationkey FROM nation WHERE name IS NOT NULL OR regionkey = 4")).isFullyPushedDown();
+
+        try (TestTable table = new TestTable(
+                getQueryRunner()::execute,
+                "test_is_not_null_predicate_pushdown",
+                "(a_int integer, a_varchar varchar(1))",
+                List.of(
+                        "1, 'A'",
+                        "2, 'B'",
+                        "1, NULL",
+                        "2, NULL"))) {
+            assertThat(query("SELECT a_int FROM " + table.getName() + " WHERE a_varchar IS NOT NULL OR a_int = 1")).isFullyPushedDown();
+        }
+    }
+
+    @Test
+    public void testNullIfPredicatePushdown()
+    {
+        assertThat(query("SELECT nationkey FROM nation WHERE NULLIF(name, 'ALGERIA') IS NULL"))
+                .matches("VALUES BIGINT '0'")
+                .isFullyPushedDown();
+
+        assertThat(query("SELECT name FROM nation WHERE NULLIF(nationkey, 0) IS NULL"))
+                .matches("VALUES CAST('ALGERIA' AS varchar(25))")
+                .isFullyPushedDown();
+
+        assertThat(query("SELECT nationkey FROM nation WHERE NULLIF(name, 'Algeria') IS NULL"))
+                .returnsEmptyResult()
+                .isFullyPushedDown();
+
+        // NULLIF returns the first argument because arguments aren't the same
+        assertThat(query("SELECT nationkey FROM nation WHERE NULLIF(name, 'Name not found') = name"))
+                .matches("SELECT nationkey FROM nation")
+                .isFullyPushedDown();
+    }
+
+    @Test
+    public void testNotExpressionPushdown()
+    {
+        assertThat(query("SELECT nationkey FROM nation WHERE NOT(name LIKE '%A%' ESCAPE '\\')")).isFullyPushedDown();
+
+        try (TestTable table = new TestTable(
+                getQueryRunner()::execute,
+                "test_is_not_predicate_pushdown",
+                "(a_int integer, a_varchar varchar(2))",
+                List.of(
+                        "1, 'Aa'",
+                        "2, 'Bb'",
+                        "1, NULL",
+                        "2, NULL"))) {
+            assertThat(query("SELECT a_int FROM " + table.getName() + " WHERE NOT(a_varchar LIKE 'A%') OR a_int = 2")).isFullyPushedDown();
+            assertThat(query("SELECT a_int FROM " + table.getName() + " WHERE NOT(a_varchar LIKE 'A%' OR a_int = 2)")).isFullyPushedDown();
         }
     }
 
@@ -834,5 +930,14 @@ public class TestPostgreSqlConnectorTest
     {
         long secondsToSleep = round(minimalQueryDuration.convertTo(SECONDS).getValue() + 1);
         return new TestView(onRemoteDatabase(), "test_sleeping_view", format("SELECT 1 FROM pg_sleep(%d)", secondsToSleep));
+    }
+
+    @Override
+    protected Session joinPushdownEnabled(Session session)
+    {
+        return Session.builder(super.joinPushdownEnabled(session))
+                // strategy is AUTOMATIC by default and would not work for certain test cases (even if statistics are collected)
+                .setCatalogSessionProperty(session.getCatalog().orElseThrow(), "join_pushdown_strategy", "EAGER")
+                .build();
     }
 }

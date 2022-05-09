@@ -5,12 +5,12 @@
     <parent>
         <groupId>io.airlift</groupId>
         <artifactId>airbase</artifactId>
-        <version>122</version>
+        <version>123</version>
     </parent>
 
     <groupId>io.trino</groupId>
     <artifactId>trino-root</artifactId>
-    <version>373-SNAPSHOT</version>
+    <version>381-SNAPSHOT</version>
 
     <name>trino-root</name>
     <description>Trino</description>
@@ -49,9 +49,9 @@
         <dep.accumulo.version>1.7.4</dep.accumulo.version>
         <dep.accumulo-hadoop.version>2.7.7-1</dep.accumulo-hadoop.version>
         <dep.antlr.version>4.9.3</dep.antlr.version>
-        <dep.airlift.version>214</dep.airlift.version>
+        <dep.airlift.version>215</dep.airlift.version>
         <dep.packaging.version>${dep.airlift.version}</dep.packaging.version>
-        <dep.aws-sdk.version>1.12.85</dep.aws-sdk.version>
+        <dep.aws-sdk.version>1.12.172</dep.aws-sdk.version>
         <dep.okhttp.version>3.14.9</dep.okhttp.version>
         <dep.joda.version>2.10.13</dep.joda.version>
         <dep.jsonwebtoken.version>0.11.2</dep.jsonwebtoken.version>
@@ -60,13 +60,14 @@
         <dep.scribejava.version>6.9.0</dep.scribejava.version>
         <dep.tempto.version>187</dep.tempto.version>
         <dep.gcs.version>2.0.0</dep.gcs.version>
-        <dep.errorprone.version>2.11.0</dep.errorprone.version>
+        <dep.errorprone.version>2.12.0</dep.errorprone.version>
         <dep.testcontainers.version>1.16.3</dep.testcontainers.version>
+        <dep.duct-tape.version>1.0.8</dep.duct-tape.version>
         <dep.docker-java.version>3.2.12</dep.docker-java.version>
-        <dep.coral.version>1.0.121</dep.coral.version>
+        <dep.coral.version>2.0.55</dep.coral.version>
         <dep.confluent.version>5.5.2</dep.confluent.version>
 
-        <dep.docker.images.version>53</dep.docker.images.version>
+        <dep.docker.images.version>56</dep.docker.images.version>
 
         <!--
           America/Bahia_Banderas has:
@@ -113,10 +114,11 @@
         <module>plugin/trino-blackhole</module>
         <module>plugin/trino-cassandra</module>
         <module>plugin/trino-clickhouse</module>
+        <module>plugin/trino-delta-lake</module>
         <module>plugin/trino-druid</module>
         <module>plugin/trino-elasticsearch</module>
         <module>plugin/trino-example-http</module>
-        <module>plugin/trino-exchange</module>
+        <module>plugin/trino-exchange-filesystem</module>
         <module>plugin/trino-geospatial</module>
         <module>plugin/trino-google-sheets</module>
         <module>plugin/trino-hive</module>
@@ -128,8 +130,8 @@
         <module>plugin/trino-kinesis</module>
         <module>plugin/trino-kudu</module>
         <module>plugin/trino-local-file</module>
+        <module>plugin/trino-mariadb</module>
         <module>plugin/trino-memory</module>
-        <module>plugin/trino-memsql</module>
         <module>plugin/trino-ml</module>
         <module>plugin/trino-mongodb</module>
         <module>plugin/trino-mysql</module>
@@ -145,6 +147,7 @@
         <module>plugin/trino-redshift</module>
         <module>plugin/trino-resource-group-managers</module>
         <module>plugin/trino-session-property-managers</module>
+        <module>plugin/trino-singlestore</module>
         <module>plugin/trino-sqlserver</module>
         <module>plugin/trino-teradata-functions</module>
         <module>plugin/trino-thrift</module>
@@ -156,6 +159,7 @@
         <module>service/trino-verifier</module>
         <module>testing/trino-benchmark</module>
         <module>testing/trino-benchto-benchmarks</module>
+        <module>testing/trino-plugin-reader</module>
         <module>testing/trino-product-tests</module>
         <module>testing/trino-product-tests-launcher</module>
         <module>testing/trino-server-dev</module>
@@ -235,6 +239,19 @@
 
             <dependency>
                 <groupId>io.trino</groupId>
+                <artifactId>trino-delta-lake</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>io.trino</groupId>
+                <artifactId>trino-delta-lake</artifactId>
+                <type>test-jar</type>
+                <version>${project.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>io.trino</groupId>
                 <artifactId>trino-elasticsearch</artifactId>
                 <version>${project.version}</version>
             </dependency>
@@ -248,13 +265,13 @@
 
             <dependency>
                 <groupId>io.trino</groupId>
-                <artifactId>trino-exchange</artifactId>
+                <artifactId>trino-exchange-filesystem</artifactId>
                 <version>${project.version}</version>
             </dependency>
 
             <dependency>
                 <groupId>io.trino</groupId>
-                <artifactId>trino-exchange</artifactId>
+                <artifactId>trino-exchange-filesystem</artifactId>
                 <type>test-jar</type>
                 <version>${project.version}</version>
             </dependency>
@@ -324,6 +341,12 @@
                 <groupId>io.trino</groupId>
                 <artifactId>trino-main</artifactId>
                 <type>test-jar</type>
+                <version>${project.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>io.trino</groupId>
+                <artifactId>trino-mariadb</artifactId>
                 <version>${project.version}</version>
             </dependency>
 
@@ -585,7 +608,7 @@
             <dependency>
                 <groupId>io.trino.hive</groupId>
                 <artifactId>hive-apache</artifactId>
-                <version>3.1.2-18</version>
+                <version>3.1.2-19</version>
             </dependency>
 
             <dependency>
@@ -1115,7 +1138,7 @@
 
             <dependency>
                 <groupId>com.linkedin.coral</groupId>
-                <artifactId>coral-hive</artifactId>
+                <artifactId>coral-common</artifactId>
                 <version>${dep.coral.version}</version>
                 <exclusions>
                     <exclusion>
@@ -1131,8 +1154,31 @@
 
             <dependency>
                 <groupId>com.linkedin.coral</groupId>
+                <artifactId>coral-hive</artifactId>
+                <version>${dep.coral.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>com.linkedin.coral</groupId>
                 <artifactId>coral-trino</artifactId>
                 <version>${dep.coral.version}</version>
+                <exclusions>
+                    <!--
+                        The `trino-parser` library is being used internally within the `coral-trino` library for
+                        parsing Trino SQL statements. This functionality is irrelevant in the context of
+                        using Coral for Hive view translations within Trino.
+                        This dependency is excluded because `trino-parser` does not guarantee API or behavioral
+                        backwards compatibility.
+                        Trino cannot provide the version on which `coral-trino` library depends on, because the
+                        current version of `trino-parser` is used in tests of this module.
+                        The dependency is therefore intentionally excluded to avoid breaking in an unexpected way,
+                        or silent correctness issues.
+                    -->
+                    <exclusion>
+                        <groupId>io.trino</groupId>
+                        <artifactId>trino-parser</artifactId>
+                    </exclusion>
+                </exclusions>
             </dependency>
 
             <dependency>
@@ -1386,7 +1432,7 @@
             <dependency>
                 <groupId>org.alluxio</groupId>
                 <artifactId>alluxio-shaded-client</artifactId>
-                <version>2.6.2</version>
+                <version>2.7.3</version>
                 <exclusions>
                     <exclusion>
                         <groupId>org.slf4j</groupId>
@@ -1435,6 +1481,12 @@
                 <groupId>org.apache.kafka</groupId>
                 <artifactId>kafka-clients</artifactId>
                 <version>2.4.1</version>
+            </dependency>
+
+            <dependency>
+                <groupId>org.apache.maven</groupId>
+                <artifactId>maven-model</artifactId>
+                <version>3.8.4</version>
             </dependency>
 
             <dependency>
@@ -1489,6 +1541,12 @@
                 <groupId>org.checkerframework</groupId>
                 <artifactId>checker-qual</artifactId>
                 <version>3.20.0</version>
+            </dependency>
+
+            <dependency>
+                <groupId>org.codehaus.plexus</groupId>
+                <artifactId>plexus-utils</artifactId>
+                <version>3.4.1</version>
             </dependency>
 
             <dependency>
@@ -1550,6 +1608,13 @@
             </dependency>
 
             <dependency>
+                <groupId>org.mariadb.jdbc</groupId>
+                <artifactId>mariadb-java-client</artifactId>
+                <!-- Client 3.0.3 against MariaDB server 10.2 causes syntax error when accessing metadata-->
+                <version>2.7.5</version>
+            </dependency>
+
+            <dependency>
                 <groupId>org.openjdk.jol</groupId>
                 <artifactId>jol-core</artifactId>
                 <version>0.2</version>
@@ -1570,7 +1635,7 @@
             <dependency>
                 <groupId>org.postgresql</groupId>
                 <artifactId>postgresql</artifactId>
-                <version>42.3.1</version>
+                <version>42.3.4</version>
             </dependency>
 
             <dependency>
@@ -1611,11 +1676,11 @@
                 </exclusions>
             </dependency>
 
-            <!-- Transitive dependency. Avoid different versions being used -->
+            <!-- Transitive dependency from jackson-dataformat-yaml. Avoid different versions being used -->
             <dependency>
                 <groupId>org.yaml</groupId>
                 <artifactId>snakeyaml</artifactId>
-                <version>1.26</version>
+                <version>1.28</version>
             </dependency>
         </dependencies>
     </dependencyManagement>
@@ -1761,6 +1826,8 @@
                         <runOnlyOnce>true</runOnlyOnce>
                         <injectAllReactorProjects>true</injectAllReactorProjects>
                         <offline>true</offline>
+                        <!-- A workaround to make build work in a Git worktree, see https://github.com/git-commit-id/git-commit-id-maven-plugin/issues/215 -->
+                        <useNativeGit>true</useNativeGit>
                     </configuration>
                 </plugin>
             </plugins>
@@ -1827,7 +1894,6 @@
                                     -Xep:BoxedPrimitiveConstructor:ERROR \
                                     -Xep:ClassCanBeStatic:ERROR \
                                     -Xep:CompareToZero:ERROR \
-                                    -Xep:DoubleBraceInitialization:ERROR \
                                     -Xep:EqualsGetClass:OFF <!-- we would rather want the opposite check --> \
                                     -Xep:EqualsIncompatibleType:ERROR \
                                     -Xep:FallThrough:ERROR \
@@ -1844,6 +1910,7 @@
                                     -Xep:ObjectToString:ERROR \
                                     -Xep:PreferredInterfaceType:OFF <!-- flags List fields even if initialized with ImmutableList --> \
                                     -Xep:StreamResourceLeak:ERROR \
+                                    -Xep:UnnecessaryLambda:OFF <!-- we deliberately use it in a couple of places --> \
                                     -Xep:UnnecessaryMethodReference:ERROR \
                                     -Xep:UnnecessaryOptionalGet:ERROR \
                                     -Xep:UnusedVariable:ERROR \
@@ -1890,9 +1957,9 @@
             <build>
                 <plugins>
                     <plugin>
-                        <groupId>com.vackosar.gitflowincrementalbuilder</groupId>
+                        <groupId>io.github.gitflow-incremental-builder</groupId>
                         <artifactId>gitflow-incremental-builder</artifactId>
-                        <version>3.15.0</version>
+                        <version>4.0.0</version>
                         <extensions>true</extensions>
                         <configuration>
                             <disableIfBranchMatches>master</disableIfBranchMatches>

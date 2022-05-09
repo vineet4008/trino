@@ -34,7 +34,6 @@ import io.trino.spi.connector.ConnectorTableLayout;
 import io.trino.spi.connector.ConnectorTableMetadata;
 import io.trino.spi.connector.ConnectorTableProperties;
 import io.trino.spi.connector.ConnectorViewDefinition;
-import io.trino.spi.connector.Constraint;
 import io.trino.spi.connector.LimitApplicationResult;
 import io.trino.spi.connector.RetryMode;
 import io.trino.spi.connector.SampleApplicationResult;
@@ -116,14 +115,27 @@ public class MemoryMetadata
             throw new TrinoException(NOT_FOUND, format("Schema [%s] does not exist", schemaName));
         }
 
-        boolean tablesExist = tables.values().stream()
-                .anyMatch(table -> table.getSchemaName().equals(schemaName));
-
-        if (tablesExist) {
+        // DropSchemaTask has the same logic, but needs to check in connector side considering concurrent operations
+        if (!isSchemaEmpty(schemaName)) {
             throw new TrinoException(SCHEMA_NOT_EMPTY, "Schema not empty: " + schemaName);
         }
 
         verify(schemas.remove(schemaName));
+    }
+
+    private boolean isSchemaEmpty(String schemaName)
+    {
+        if (tables.values().stream()
+                .anyMatch(table -> table.getSchemaName().equals(schemaName))) {
+            return false;
+        }
+
+        if (views.keySet().stream()
+                .anyMatch(view -> view.getSchemaName().equals(schemaName))) {
+            return false;
+        }
+
+        return true;
     }
 
     @Override
@@ -380,7 +392,7 @@ public class MemoryMetadata
     }
 
     @Override
-    public TableStatistics getTableStatistics(ConnectorSession session, ConnectorTableHandle tableHandle, Constraint constraint)
+    public TableStatistics getTableStatistics(ConnectorSession session, ConnectorTableHandle tableHandle)
     {
         List<MemoryDataFragment> dataFragments = getDataFragments(((MemoryTableHandle) tableHandle).getId());
         long rows = dataFragments.stream()

@@ -16,13 +16,16 @@ package io.trino.plugin.iceberg;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import io.airlift.units.DataSize;
 import io.trino.spi.connector.ConnectorTableHandle;
+import io.trino.spi.connector.RetryMode;
 import io.trino.spi.connector.SchemaTableName;
 import io.trino.spi.predicate.TupleDomain;
 
 import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -36,6 +39,11 @@ public class IcebergTableHandle
     private final String tableName;
     private final TableType tableType;
     private final Optional<Long> snapshotId;
+    private final String tableSchemaJson;
+    private final int formatVersion;
+    private final String tableLocation;
+    private final Map<String, String> storageProperties;
+    private final RetryMode retryMode;
 
     // Filter used during split generation and table scan, but not required to be strictly enforced by Iceberg Connector
     private final TupleDomain<IcebergColumnHandle> unenforcedPredicate;
@@ -56,20 +64,30 @@ public class IcebergTableHandle
             @JsonProperty("tableName") String tableName,
             @JsonProperty("tableType") TableType tableType,
             @JsonProperty("snapshotId") Optional<Long> snapshotId,
+            @JsonProperty("tableSchemaJson") String tableSchemaJson,
+            @JsonProperty("formatVersion") int formatVersion,
             @JsonProperty("unenforcedPredicate") TupleDomain<IcebergColumnHandle> unenforcedPredicate,
             @JsonProperty("enforcedPredicate") TupleDomain<IcebergColumnHandle> enforcedPredicate,
             @JsonProperty("projectedColumns") Set<IcebergColumnHandle> projectedColumns,
-            @JsonProperty("nameMappingJson") Optional<String> nameMappingJson)
+            @JsonProperty("nameMappingJson") Optional<String> nameMappingJson,
+            @JsonProperty("tableLocation") String tableLocation,
+            @JsonProperty("storageProperties") Map<String, String> storageProperties,
+            @JsonProperty("retryMode") RetryMode retryMode)
     {
         this(
                 schemaName,
                 tableName,
                 tableType,
                 snapshotId,
+                tableSchemaJson,
+                formatVersion,
                 unenforcedPredicate,
                 enforcedPredicate,
                 projectedColumns,
                 nameMappingJson,
+                tableLocation,
+                storageProperties,
+                retryMode,
                 false,
                 Optional.empty());
     }
@@ -79,10 +97,15 @@ public class IcebergTableHandle
             String tableName,
             TableType tableType,
             Optional<Long> snapshotId,
+            String tableSchemaJson,
+            int formatVersion,
             TupleDomain<IcebergColumnHandle> unenforcedPredicate,
             TupleDomain<IcebergColumnHandle> enforcedPredicate,
             Set<IcebergColumnHandle> projectedColumns,
             Optional<String> nameMappingJson,
+            String tableLocation,
+            Map<String, String> storageProperties,
+            RetryMode retryMode,
             boolean recordScannedFiles,
             Optional<DataSize> maxScannedFileSize)
     {
@@ -90,10 +113,15 @@ public class IcebergTableHandle
         this.tableName = requireNonNull(tableName, "tableName is null");
         this.tableType = requireNonNull(tableType, "tableType is null");
         this.snapshotId = requireNonNull(snapshotId, "snapshotId is null");
+        this.tableSchemaJson = requireNonNull(tableSchemaJson, "schemaJson is null");
+        this.formatVersion = formatVersion;
         this.unenforcedPredicate = requireNonNull(unenforcedPredicate, "unenforcedPredicate is null");
         this.enforcedPredicate = requireNonNull(enforcedPredicate, "enforcedPredicate is null");
         this.projectedColumns = ImmutableSet.copyOf(requireNonNull(projectedColumns, "projectedColumns is null"));
         this.nameMappingJson = requireNonNull(nameMappingJson, "nameMappingJson is null");
+        this.tableLocation = requireNonNull(tableLocation, "tableLocation is null");
+        this.storageProperties = ImmutableMap.copyOf(requireNonNull(storageProperties, "storageProperties is null"));
+        this.retryMode = requireNonNull(retryMode, "retryMode is null");
         this.recordScannedFiles = recordScannedFiles;
         this.maxScannedFileSize = requireNonNull(maxScannedFileSize, "maxScannedFileSize is null");
     }
@@ -123,6 +151,18 @@ public class IcebergTableHandle
     }
 
     @JsonProperty
+    public String getTableSchemaJson()
+    {
+        return tableSchemaJson;
+    }
+
+    @JsonProperty
+    public int getFormatVersion()
+    {
+        return formatVersion;
+    }
+
+    @JsonProperty
     public TupleDomain<IcebergColumnHandle> getUnenforcedPredicate()
     {
         return unenforcedPredicate;
@@ -144,6 +184,24 @@ public class IcebergTableHandle
     public Optional<String> getNameMappingJson()
     {
         return nameMappingJson;
+    }
+
+    @JsonProperty
+    public String getTableLocation()
+    {
+        return tableLocation;
+    }
+
+    @JsonProperty
+    public Map<String, String> getStorageProperties()
+    {
+        return storageProperties;
+    }
+
+    @JsonProperty
+    public RetryMode getRetryMode()
+    {
+        return retryMode;
     }
 
     @JsonIgnore
@@ -175,10 +233,35 @@ public class IcebergTableHandle
                 tableName,
                 tableType,
                 snapshotId,
+                tableSchemaJson,
+                formatVersion,
                 unenforcedPredicate,
                 enforcedPredicate,
                 projectedColumns,
                 nameMappingJson,
+                tableLocation,
+                storageProperties,
+                retryMode,
+                recordScannedFiles,
+                maxScannedFileSize);
+    }
+
+    public IcebergTableHandle withRetryMode(RetryMode retryMode)
+    {
+        return new IcebergTableHandle(
+                schemaName,
+                tableName,
+                tableType,
+                snapshotId,
+                tableSchemaJson,
+                formatVersion,
+                unenforcedPredicate,
+                enforcedPredicate,
+                projectedColumns,
+                nameMappingJson,
+                tableLocation,
+                storageProperties,
+                retryMode,
                 recordScannedFiles,
                 maxScannedFileSize);
     }
@@ -190,10 +273,15 @@ public class IcebergTableHandle
                 tableName,
                 tableType,
                 snapshotId,
+                tableSchemaJson,
+                formatVersion,
                 unenforcedPredicate,
                 enforcedPredicate,
                 projectedColumns,
                 nameMappingJson,
+                tableLocation,
+                storageProperties,
+                retryMode,
                 recordScannedFiles,
                 Optional.of(maxScannedFileSize));
     }
@@ -214,17 +302,23 @@ public class IcebergTableHandle
                 Objects.equals(tableName, that.tableName) &&
                 tableType == that.tableType &&
                 Objects.equals(snapshotId, that.snapshotId) &&
+                Objects.equals(tableSchemaJson, that.tableSchemaJson) &&
+                formatVersion == that.formatVersion &&
                 Objects.equals(unenforcedPredicate, that.unenforcedPredicate) &&
                 Objects.equals(enforcedPredicate, that.enforcedPredicate) &&
                 Objects.equals(projectedColumns, that.projectedColumns) &&
                 Objects.equals(nameMappingJson, that.nameMappingJson) &&
+                Objects.equals(tableLocation, that.tableLocation) &&
+                Objects.equals(retryMode, that.retryMode) &&
+                Objects.equals(storageProperties, that.storageProperties) &&
                 Objects.equals(maxScannedFileSize, that.maxScannedFileSize);
     }
 
     @Override
     public int hashCode()
     {
-        return Objects.hash(schemaName, tableName, tableType, snapshotId, unenforcedPredicate, enforcedPredicate, projectedColumns, nameMappingJson, recordScannedFiles, maxScannedFileSize);
+        return Objects.hash(schemaName, tableName, tableType, snapshotId, tableSchemaJson, formatVersion, unenforcedPredicate, enforcedPredicate,
+                projectedColumns, nameMappingJson, tableLocation, storageProperties, retryMode, recordScannedFiles, maxScannedFileSize);
     }
 
     @Override

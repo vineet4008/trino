@@ -35,6 +35,7 @@ import static java.lang.String.format;
 import static java.util.stream.Collectors.joining;
 import static java.util.stream.IntStream.range;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.testng.Assert.assertFalse;
 import static org.testng.Assert.assertTrue;
 
@@ -62,11 +63,14 @@ public abstract class BaseMySqlConnectorTest
             case SUPPORTS_JOIN_PUSHDOWN_WITH_DISTINCT_FROM:
                 return false;
 
-            case SUPPORTS_COMMENT_ON_TABLE:
             case SUPPORTS_COMMENT_ON_COLUMN:
+            case SUPPORTS_ADD_COLUMN_WITH_COMMENT:
                 return false;
 
             case SUPPORTS_ARRAY:
+            case SUPPORTS_ROW_TYPE:
+                return false;
+
             case SUPPORTS_NEGATIVE_DATE:
                 return false;
 
@@ -184,14 +188,11 @@ public abstract class BaseMySqlConnectorTest
                         ")");
     }
 
-    @Test
-    public void testDropTable()
+    @Override
+    public void testDeleteWithLike()
     {
-        assertUpdate("CREATE TABLE test_drop AS SELECT 123 x", 1);
-        assertTrue(getQueryRunner().tableExists(getSession(), "test_drop"));
-
-        assertUpdate("DROP TABLE test_drop");
-        assertFalse(getQueryRunner().tableExists(getSession(), "test_drop"));
+        assertThatThrownBy(super::testDeleteWithLike)
+                .hasStackTraceContaining("TrinoException: Unsupported delete");
     }
 
     @Test
@@ -242,21 +243,6 @@ public abstract class BaseMySqlConnectorTest
         assertEquals(row.getField(0), (byte) 127);
 
         assertUpdate("DROP TABLE mysql_test_tinyint1");
-    }
-
-    @Test
-    public void testCharTrailingSpace()
-    {
-        onRemoteDatabase().execute("CREATE TABLE tpch.char_trailing_space (x char(10))");
-        assertUpdate("INSERT INTO char_trailing_space VALUES ('test')", 1);
-
-        assertQuery("SELECT * FROM char_trailing_space WHERE x = char 'test'", "VALUES 'test'");
-        assertQuery("SELECT * FROM char_trailing_space WHERE x = char 'test  '", "VALUES 'test'");
-        assertQuery("SELECT * FROM char_trailing_space WHERE x = char 'test        '", "VALUES 'test'");
-
-        assertEquals(getQueryRunner().execute("SELECT * FROM char_trailing_space WHERE x = char ' test'").getRowCount(), 0);
-
-        assertUpdate("DROP TABLE char_trailing_space");
     }
 
     @Override
@@ -381,5 +367,14 @@ public abstract class BaseMySqlConnectorTest
     protected SqlExecutor onRemoteDatabase()
     {
         return mySqlServer::execute;
+    }
+
+    @Override
+    protected Session joinPushdownEnabled(Session session)
+    {
+        return Session.builder(super.joinPushdownEnabled(session))
+                // strategy is AUTOMATIC by default and would not work for certain test cases (even if statistics are collected)
+                .setCatalogSessionProperty(session.getCatalog().orElseThrow(), "join_pushdown_strategy", "EAGER")
+                .build();
     }
 }

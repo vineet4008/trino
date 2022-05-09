@@ -19,6 +19,7 @@ import com.google.common.io.Closer;
 import com.google.inject.Module;
 import io.airlift.discovery.server.testing.TestingDiscoveryServer;
 import io.airlift.log.Logger;
+import io.airlift.log.Logging;
 import io.airlift.testing.Assertions;
 import io.airlift.units.Duration;
 import io.trino.Session;
@@ -29,11 +30,12 @@ import io.trino.execution.FailureInjector.InjectedFailureType;
 import io.trino.execution.QueryManager;
 import io.trino.execution.warnings.WarningCollector;
 import io.trino.metadata.AllNodes;
+import io.trino.metadata.FunctionBundle;
+import io.trino.metadata.FunctionManager;
 import io.trino.metadata.InternalNode;
 import io.trino.metadata.Metadata;
 import io.trino.metadata.QualifiedObjectName;
 import io.trino.metadata.SessionPropertyManager;
-import io.trino.metadata.SqlFunction;
 import io.trino.server.BasicQueryInfo;
 import io.trino.server.SessionPropertyDefaults;
 import io.trino.server.testing.TestingTrinoServer;
@@ -71,6 +73,8 @@ import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Throwables.throwIfUnchecked;
 import static com.google.common.collect.Iterables.getOnlyElement;
 import static com.google.inject.util.Modules.EMPTY_MODULE;
+import static io.airlift.log.Level.ERROR;
+import static io.airlift.log.Level.WARN;
 import static io.airlift.testing.Closeables.closeAllSuppress;
 import static io.airlift.units.Duration.nanosSince;
 import static java.util.Objects.requireNonNull;
@@ -117,6 +121,8 @@ public class DistributedQueryRunner
         if (backupCoordinatorProperties.isPresent()) {
             checkArgument(nodeCount >= 2, "the nodeCount must be greater than or equal to two!");
         }
+
+        setupLogging();
 
         try {
             long start = System.nanoTime();
@@ -198,9 +204,17 @@ public class DistributedQueryRunner
 
         long start = System.nanoTime();
         for (TestingTrinoServer server : servers) {
-            server.getMetadata().addFunctions(AbstractTestQueries.CUSTOM_FUNCTIONS);
+            server.addFunctions(AbstractTestQueries.CUSTOM_FUNCTIONS);
         }
         log.info("Added functions in %s", nanosSince(start).convertToMostSuccinctTimeUnit());
+    }
+
+    private static void setupLogging()
+    {
+        Logging logging = Logging.initialize();
+        logging.setLevel("Bootstrap", WARN);
+        logging.setLevel("org.glassfish", ERROR);
+        logging.setLevel("org.eclipse.jetty.server", WARN);
     }
 
     private static TestingTrinoServer createTestingTrinoServer(
@@ -215,7 +229,6 @@ public class DistributedQueryRunner
     {
         long start = System.nanoTime();
         ImmutableMap.Builder<String, String> propertiesBuilder = ImmutableMap.<String, String>builder()
-                .put("internal-communication.shared-secret", "test-secret")
                 .put("query.client.timeout", "10m")
                 // Use few threads in tests to preserve resources on CI
                 .put("discovery.http-client.min-threads", "1") // default 8
@@ -272,7 +285,7 @@ public class DistributedQueryRunner
                     ImmutableList.of()));
             serverBuilder.add(server);
             // add functions
-            server.getMetadata().addFunctions(AbstractTestQueries.CUSTOM_FUNCTIONS);
+            server.addFunctions(AbstractTestQueries.CUSTOM_FUNCTIONS);
         }
         servers = serverBuilder.build();
         waitForAllNodesGloballyVisible();
@@ -349,6 +362,12 @@ public class DistributedQueryRunner
     }
 
     @Override
+    public FunctionManager getFunctionManager()
+    {
+        return coordinator.getFunctionManager();
+    }
+
+    @Override
     public SplitManager getSplitManager()
     {
         return coordinator.getSplitManager();
@@ -415,9 +434,9 @@ public class DistributedQueryRunner
     }
 
     @Override
-    public void addFunctions(List<? extends SqlFunction> functions)
+    public void addFunctions(FunctionBundle functionBundle)
     {
-        servers.forEach(server -> server.getMetadata().addFunctions(functions));
+        servers.forEach(server -> server.addFunctions(functionBundle));
     }
 
     public void createCatalog(String catalogName, String connectorName)

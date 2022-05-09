@@ -23,7 +23,6 @@ import io.trino.Session;
 import io.trino.connector.CatalogName;
 import io.trino.metadata.AbstractMockMetadata;
 import io.trino.metadata.BoundSignature;
-import io.trino.metadata.FunctionInvoker;
 import io.trino.metadata.FunctionMetadata;
 import io.trino.metadata.FunctionNullability;
 import io.trino.metadata.Metadata;
@@ -36,7 +35,6 @@ import io.trino.spi.connector.ColumnHandle;
 import io.trino.spi.connector.ConnectorTableHandle;
 import io.trino.spi.connector.ConnectorTableProperties;
 import io.trino.spi.connector.SortOrder;
-import io.trino.spi.function.InvocationConvention;
 import io.trino.spi.predicate.Domain;
 import io.trino.spi.predicate.TupleDomain;
 import io.trino.spi.type.RowType;
@@ -148,21 +146,15 @@ public class TestEffectivePredicateExtractor
         }
 
         @Override
-        public FunctionMetadata getFunctionMetadata(ResolvedFunction resolvedFunction)
+        public FunctionMetadata getFunctionMetadata(Session session, ResolvedFunction resolvedFunction)
         {
-            return delegate.getFunctionMetadata(resolvedFunction);
+            return delegate.getFunctionMetadata(session, resolvedFunction);
         }
 
         @Override
         public ResolvedFunction getCoercion(Session session, Type fromType, Type toType)
         {
             return delegate.getCoercion(session, fromType, toType);
-        }
-
-        @Override
-        public FunctionInvoker getScalarFunctionInvoker(ResolvedFunction resolvedFunction, InvocationConvention invocationConvention)
-        {
-            return delegate.getScalarFunctionInvoker(resolvedFunction, invocationConvention);
         }
 
         @Override

@@ -2,6 +2,10 @@
 Kudu connector
 ==============
 
+.. raw:: html
+
+  <img src="../_static/img/kudu.png" class="connector-logo">
+
 The Kudu connector allows querying, inserting and deleting data in `Apache Kudu`_.
 
 .. _Apache Kudu: https://kudu.apache.org/
@@ -218,31 +222,31 @@ The data types of Trino and Kudu are mapped as far as possible:
 | ``DECIMAL``           | ``DECIMAL``           | only supported for    |
 |                       |                       | Kudu server >= 1.7.0  |
 +-----------------------+-----------------------+-----------------------+
-| ``CHAR``              | -                     | not supported         |
+| ``CHAR``              | \-                    | not supported         |
 +-----------------------+-----------------------+-----------------------+
-| ``DATE``              | -                     | not supported [2]_    |
+| ``DATE``              | \-                    | not supported [2]_    |
 +-----------------------+-----------------------+-----------------------+
-| ``TIME``              | -                     | not supported         |
+| ``TIME``              | \-                    | not supported         |
 +-----------------------+-----------------------+-----------------------+
-| ``JSON``              | -                     | not supported         |
+| ``JSON``              | \-                    | not supported         |
 +-----------------------+-----------------------+-----------------------+
-| ``TIME WITH           | -                     | not supported         |
+| ``TIME WITH           | \-                    | not supported         |
 | TIMEZONE``            |                       |                       |
 +-----------------------+-----------------------+-----------------------+
-| ``TIMESTAMP WITH TIME | -                     | not supported         |
+| ``TIMESTAMP WITH TIME | \-                    | not supported         |
 | ZONE``                |                       |                       |
 +-----------------------+-----------------------+-----------------------+
-| ``INTERVAL YEAR TO MO | -                     | not supported         |
+| ``INTERVAL YEAR TO MO | \-                    | not supported         |
 | NTH``                 |                       |                       |
 +-----------------------+-----------------------+-----------------------+
-| ``INTERVAL DAY TO SEC | -                     | not supported         |
+| ``INTERVAL DAY TO SEC | \-                    | not supported         |
 | OND``                 |                       |                       |
 +-----------------------+-----------------------+-----------------------+
-| ``ARRAY``             | -                     | not supported         |
+| ``ARRAY``             | \-                    | not supported         |
 +-----------------------+-----------------------+-----------------------+
-| ``MAP``               | -                     | not supported         |
+| ``MAP``               | \-                    | not supported         |
 +-----------------------+-----------------------+-----------------------+
-| ``IPADDRESS``         | -                     | not supported         |
+| ``IPADDRESS``         | \-                    | not supported         |
 +-----------------------+-----------------------+-----------------------+
 
 

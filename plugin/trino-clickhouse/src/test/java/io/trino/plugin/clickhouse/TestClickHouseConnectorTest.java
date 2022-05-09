@@ -48,6 +48,7 @@ import static java.lang.String.format;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.testng.Assert.assertFalse;
+import static org.testng.Assert.assertNull;
 import static org.testng.Assert.assertTrue;
 
 public class TestClickHouseConnectorTest
@@ -82,6 +83,9 @@ public class TestClickHouseConnectorTest
                 return false;
 
             case SUPPORTS_ARRAY:
+            case SUPPORTS_ROW_TYPE:
+                return false;
+
             case SUPPORTS_NEGATIVE_DATE:
                 return false;
 
@@ -173,6 +177,22 @@ public class TestClickHouseConnectorTest
 
     @Test
     @Override
+    public void testAddColumnWithComment()
+    {
+        // Override because the default storage type doesn't support adding columns
+        try (TestTable table = new TestTable(getQueryRunner()::execute, "test_add_col_desc_", "(a_varchar varchar NOT NULL) WITH (engine = 'MergeTree', order_by = ARRAY['a_varchar'])")) {
+            String tableName = table.getName();
+
+            assertUpdate("ALTER TABLE " + tableName + " ADD COLUMN b_varchar varchar COMMENT 'test new column comment'");
+            assertThat(getColumnComment(tableName, "b_varchar")).isEqualTo("test new column comment");
+
+            assertUpdate("ALTER TABLE " + tableName + " ADD COLUMN empty_comment varchar COMMENT ''");
+            assertNull(getColumnComment(tableName, "empty_comment"));
+        }
+    }
+
+    @Test
+    @Override
     public void testShowCreateTable()
     {
         assertThat(computeActual("SHOW CREATE TABLE orders").getOnlyValue())
@@ -221,6 +241,15 @@ public class TestClickHouseConnectorTest
                         "col_default Nullable(Int64) DEFAULT 43," +
                         "col_nonnull_default Int64 DEFAULT 42," +
                         "col_required2 Int64) ENGINE=Log");
+    }
+
+    @Test
+    public void testCreateTableWithColumnComment()
+    {
+        // TODO (https://github.com/trinodb/trino/issues/11162) Merge into BaseConnectorTest
+        try (TestTable table = new TestTable(getQueryRunner()::execute, "test_column_comment", "(col integer COMMENT 'column comment')")) {
+            assertEquals(getColumnComment(table.getName(), "col"), "column comment");
+        }
     }
 
     @Override
@@ -554,6 +583,14 @@ public class TestClickHouseConnectorTest
         assertQueryFails(
                 "SELECT * FROM orders WHERE orderdate = DATE '-1996-09-14'",
                 "Date must be between 1970-01-01 and 2106-02-07 in ClickHouse: -1996-09-14");
+    }
+
+    @Override
+    public void testCharTrailingSpace()
+    {
+        assertThatThrownBy(super::testCharTrailingSpace)
+                .hasMessageStartingWith("Failed to execute statement: CREATE TABLE tpch.char_trailing_space");
+        throw new SkipException("Implement test for ClickHouse");
     }
 
     @Override

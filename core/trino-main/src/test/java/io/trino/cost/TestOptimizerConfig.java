@@ -44,6 +44,7 @@ public class TestOptimizerConfig
                 .setNetworkCostWeight(15)
                 .setJoinMaxBroadcastTableSize(DataSize.of(100, MEGABYTE))
                 .setJoinDistributionType(JoinDistributionType.AUTOMATIC)
+                .setJoinMultiClauseIndependenceFactor(0.25)
                 .setJoinReorderingStrategy(JoinReorderingStrategy.AUTOMATIC)
                 .setMaxReorderedJoins(9)
                 .setDistributedIndexJoinsEnabled(false)
@@ -52,10 +53,12 @@ public class TestOptimizerConfig
                 .setUsePreferredWritePartitioning(true)
                 .setPreferredWritePartitioningMinNumberOfPartitions(50)
                 .setEnableStatsCalculator(true)
-                .setStatisticsPrecalculationForPushdownEnabled(false)
+                .setStatisticsPrecalculationForPushdownEnabled(true)
                 .setCollectPlanStatisticsForAllQueries(false)
                 .setIgnoreStatsCalculatorFailures(true)
                 .setDefaultFilterFactorEnabled(false)
+                .setFilterConjunctionIndependenceFactor(0.75)
+                .setNonEstimatablePredicateApproximationEnabled(true)
                 .setOptimizeMetadataQueries(false)
                 .setOptimizeHashGeneration(true)
                 .setPushTableWriteThroughUnion(true)
@@ -80,7 +83,10 @@ public class TestOptimizerConfig
                 .setUseTableScanNodePartitioning(true)
                 .setTableScanNodePartitioningMinBucketToTaskRatio(0.5)
                 .setMergeProjectWithValues(true)
-                .setForceSingleNodeOutput(true));
+                .setForceSingleNodeOutput(true)
+                .setAdaptivePartialAggregationEnabled(true)
+                .setAdaptivePartialAggregationMinRows(100_000)
+                .setAdaptivePartialAggregationUniqueRowsRatioThreshold(0.8));
     }
 
     @Test
@@ -91,12 +97,15 @@ public class TestOptimizerConfig
                 .put("memory-cost-weight", "0.3")
                 .put("network-cost-weight", "0.2")
                 .put("enable-stats-calculator", "false")
-                .put("statistics-precalculation-for-pushdown.enabled", "true")
+                .put("statistics-precalculation-for-pushdown.enabled", "false")
                 .put("collect-plan-statistics-for-all-queries", "true")
                 .put("optimizer.ignore-stats-calculator-failures", "false")
                 .put("optimizer.default-filter-factor-enabled", "true")
+                .put("optimizer.filter-conjunction-independence-factor", "1.0")
+                .put("optimizer.non-estimatable-predicate-approximation.enabled", "false")
                 .put("join-distribution-type", "BROADCAST")
                 .put("join-max-broadcast-table-size", "42GB")
+                .put("optimizer.join-multi-clause-independence-factor", "0.75")
                 .put("optimizer.join-reordering-strategy", "NONE")
                 .put("optimizer.max-reordered-joins", "5")
                 .put("iterative-optimizer-timeout", "10s")
@@ -129,6 +138,9 @@ public class TestOptimizerConfig
                 .put("optimizer.use-table-scan-node-partitioning", "false")
                 .put("optimizer.table-scan-node-partitioning-min-bucket-to-task-ratio", "0.0")
                 .put("optimizer.merge-project-with-values", "false")
+                .put("adaptive-partial-aggregation.enabled", "false")
+                .put("adaptive-partial-aggregation.min-rows", "1")
+                .put("adaptive-partial-aggregation.unique-rows-ratio-threshold", "0.99")
                 .buildOrThrow();
 
         OptimizerConfig expected = new OptimizerConfig()
@@ -136,11 +148,12 @@ public class TestOptimizerConfig
                 .setMemoryCostWeight(0.3)
                 .setNetworkCostWeight(0.2)
                 .setEnableStatsCalculator(false)
-                .setStatisticsPrecalculationForPushdownEnabled(true)
+                .setStatisticsPrecalculationForPushdownEnabled(false)
                 .setCollectPlanStatisticsForAllQueries(true)
                 .setIgnoreStatsCalculatorFailures(false)
                 .setJoinDistributionType(BROADCAST)
                 .setJoinMaxBroadcastTableSize(DataSize.of(42, GIGABYTE))
+                .setJoinMultiClauseIndependenceFactor(0.75)
                 .setJoinReorderingStrategy(NONE)
                 .setMaxReorderedJoins(5)
                 .setIterativeOptimizerTimeout(new Duration(10, SECONDS))
@@ -151,6 +164,8 @@ public class TestOptimizerConfig
                 .setUsePreferredWritePartitioning(false)
                 .setPreferredWritePartitioningMinNumberOfPartitions(10)
                 .setDefaultFilterFactorEnabled(true)
+                .setFilterConjunctionIndependenceFactor(1.0)
+                .setNonEstimatablePredicateApproximationEnabled(false)
                 .setOptimizeMetadataQueries(true)
                 .setOptimizeHashGeneration(false)
                 .setOptimizeMixedDistinctAggregations(true)
@@ -173,7 +188,10 @@ public class TestOptimizerConfig
                 .setUseTableScanNodePartitioning(false)
                 .setTableScanNodePartitioningMinBucketToTaskRatio(0.0)
                 .setMergeProjectWithValues(false)
-                .setForceSingleNodeOutput(false);
+                .setForceSingleNodeOutput(false)
+                .setAdaptivePartialAggregationEnabled(false)
+                .setAdaptivePartialAggregationMinRows(1)
+                .setAdaptivePartialAggregationUniqueRowsRatioThreshold(0.99);
         assertFullMapping(properties, expected);
     }
 }

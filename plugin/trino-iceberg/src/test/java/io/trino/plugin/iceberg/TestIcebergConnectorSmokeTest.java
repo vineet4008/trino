@@ -14,8 +14,9 @@
 package io.trino.plugin.iceberg;
 
 import io.trino.testing.QueryRunner;
+import org.testng.SkipException;
+import org.testng.annotations.Test;
 
-import static io.trino.plugin.iceberg.IcebergQueryRunner.createIcebergQueryRunner;
 import static org.apache.iceberg.FileFormat.ORC;
 
 // Redundant over TestIcebergOrcConnectorTest, but exists to exercise BaseConnectorSmokeTest
@@ -32,6 +33,15 @@ public class TestIcebergConnectorSmokeTest
     protected QueryRunner createQueryRunner()
             throws Exception
     {
-        return createIcebergQueryRunner(REQUIRED_TPCH_TABLES);
+        return IcebergQueryRunner.builder()
+                .setInitialTables(REQUIRED_TPCH_TABLES)
+                .build();
+    }
+
+    @Test
+    @Override
+    public void testDeleteRowsConcurrently()
+    {
+        throw new SkipException("The File Hive Metastore does not have strong concurrency guarantees");
     }
 }

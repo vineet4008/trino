@@ -13,9 +13,8 @@
  */
 package io.trino.plugin.iceberg;
 
-import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
+import io.trino.plugin.base.CatalogName;
 import io.trino.plugin.hive.HdfsConfig;
 import io.trino.plugin.hive.HdfsConfiguration;
 import io.trino.plugin.hive.HdfsConfigurationInitializer;
@@ -23,9 +22,13 @@ import io.trino.plugin.hive.HdfsEnvironment;
 import io.trino.plugin.hive.HiveHdfsConfiguration;
 import io.trino.plugin.hive.authentication.NoHdfsAuthentication;
 import io.trino.plugin.hive.metastore.HiveMetastore;
+import io.trino.plugin.hive.metastore.cache.CachingHiveMetastore;
 import io.trino.plugin.iceberg.catalog.IcebergTableOperationsProvider;
+import io.trino.plugin.iceberg.catalog.TrinoCatalog;
 import io.trino.plugin.iceberg.catalog.file.FileMetastoreTableOperationsProvider;
+import io.trino.plugin.iceberg.catalog.hms.TrinoHiveCatalog;
 import io.trino.spi.connector.SchemaTableName;
+import io.trino.spi.type.TestingTypeManager;
 import io.trino.testing.AbstractTestQueryFramework;
 import io.trino.testing.QueryRunner;
 import org.apache.hadoop.fs.FileSystem;
@@ -50,18 +53,19 @@ import java.io.Closeable;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
-import java.util.Optional;
 import java.util.UUID;
 
 import static com.google.common.io.MoreFiles.deleteRecursively;
 import static com.google.common.io.RecursiveDeleteOption.ALLOW_INSECURE;
 import static io.trino.plugin.hive.HdfsEnvironment.HdfsContext;
 import static io.trino.plugin.hive.metastore.file.FileHiveMetastore.createTestingFileHiveMetastore;
-import static io.trino.plugin.iceberg.IcebergQueryRunner.createIcebergQueryRunner;
 import static io.trino.plugin.iceberg.IcebergUtil.loadIcebergTable;
 import static io.trino.testing.TestingConnectorSession.SESSION;
 import static io.trino.testing.sql.TestTable.randomTableSuffix;
 import static io.trino.tpch.TpchTable.NATION;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.testng.Assert.assertEquals;
 
 public class TestIcebergV2
         extends AbstractTestQueryFramework
@@ -83,7 +87,10 @@ public class TestIcebergV2
         metastoreDir = tempDir.resolve("iceberg_data").toFile();
         metastore = createTestingFileHiveMetastore(metastoreDir);
 
-        return createIcebergQueryRunner(ImmutableMap.of(), ImmutableMap.of(), ImmutableList.of(NATION), Optional.of(metastoreDir));
+        return IcebergQueryRunner.builder()
+                .setInitialTables(NATION)
+                .setMetastoreDirectory(metastoreDir)
+                .build();
     }
 
     @AfterClass(alwaysRun = true)
@@ -91,6 +98,28 @@ public class TestIcebergV2
             throws IOException
     {
         deleteRecursively(tempDir, ALLOW_INSECURE);
+    }
+
+    @Test
+    public void testSettingFormatVersion()
+    {
+        String tableName = "test_seting_format_version_" + randomTableSuffix();
+        assertUpdate("CREATE TABLE " + tableName + " WITH (format_version = 2) AS SELECT * FROM tpch.tiny.nation", 25);
+        assertThat(loadTable(tableName).operations().current().formatVersion()).isEqualTo(2);
+        assertUpdate("DROP TABLE " + tableName);
+
+        assertUpdate("CREATE TABLE " + tableName + " WITH (format_version = 1) AS SELECT * FROM tpch.tiny.nation", 25);
+        assertThat(loadTable(tableName).operations().current().formatVersion()).isEqualTo(1);
+        assertUpdate("DROP TABLE " + tableName);
+    }
+
+    @Test
+    public void testDefaultFormatVersion()
+    {
+        String tableName = "test_default_format_version_" + randomTableSuffix();
+        assertUpdate("CREATE TABLE " + tableName + " AS SELECT * FROM tpch.tiny.nation", 25);
+        assertThat(loadTable(tableName).operations().current().formatVersion()).isEqualTo(2);
+        assertUpdate("DROP TABLE " + tableName);
     }
 
     @Test
@@ -130,7 +159,7 @@ public class TestIcebergV2
         }
 
         icebergTable.newRowDelta().addDeletes(writer.toDeleteFile()).commit();
-        assertQueryFails("SELECT * FROM " + tableName, "Iceberg tables with delete files are not supported: tpch." + tableName);
+        assertQuery("SELECT count(*) FROM " + tableName, "VALUES 24");
     }
 
     @Test
@@ -141,20 +170,41 @@ public class TestIcebergV2
         assertUpdate("CREATE TABLE " + tableName + " AS SELECT * FROM tpch.tiny.nation", 25);
         Table icebergTable = updateTableToV2(tableName);
         writeEqualityDeleteToNationTable(icebergTable);
-        assertQueryFails("SELECT * FROM " + tableName, "Iceberg tables with delete files are not supported: tpch." + tableName);
+        assertQuery("SELECT * FROM " + tableName, "SELECT * FROM nation WHERE regionkey != 1");
+        assertQuery("SELECT nationkey FROM " + tableName, "SELECT nationkey FROM nation WHERE regionkey != 1");
     }
 
     @Test
-    public void testV2TableWithUnreadEqualityDelete()
-            throws Exception
+    public void testUpgradeTableToV2FromTrino()
     {
-        String tableName = "test_v2_equality_delete" + randomTableSuffix();
-        assertUpdate("CREATE TABLE " + tableName + " AS SELECT nationkey, regionkey FROM tpch.tiny.nation", 25);
-        Table icebergTable = updateTableToV2(tableName);
-        writeEqualityDeleteToNationTable(icebergTable);
+        String tableName = "test_upgrade_table_to_v2_from_trino_" + randomTableSuffix();
+        assertUpdate("CREATE TABLE " + tableName + " WITH (format_version = 1) AS SELECT * FROM tpch.tiny.nation", 25);
+        assertEquals(loadTable(tableName).operations().current().formatVersion(), 1);
+        assertUpdate("ALTER TABLE " + tableName + " SET PROPERTIES format_version = 2");
+        assertEquals(loadTable(tableName).operations().current().formatVersion(), 2);
+        assertQuery("SELECT * FROM " + tableName, "SELECT * FROM nation");
+    }
 
-        assertUpdate("INSERT INTO " + tableName + " VALUES (100, 101)", 1);
-        assertQuery("SELECT regionkey FROM " + tableName + " WHERE nationkey = 100", "VALUES 101");
+    @Test
+    public void testDowngradingV2TableToV1Fails()
+    {
+        String tableName = "test_downgrading_v2_table_to_v1_fails_" + randomTableSuffix();
+        assertUpdate("CREATE TABLE " + tableName + " WITH (format_version = 2) AS SELECT * FROM tpch.tiny.nation", 25);
+        assertEquals(loadTable(tableName).operations().current().formatVersion(), 2);
+        assertThatThrownBy(() -> query("ALTER TABLE " + tableName + " SET PROPERTIES format_version = 1"))
+                .hasMessage("Failed to commit new table properties")
+                .getRootCause()
+                .hasMessage("Cannot downgrade v2 table to v1");
+    }
+
+    @Test
+    public void testUpgradingToInvalidVersionFails()
+    {
+        String tableName = "test_upgrading_to_invalid_version_fails_" + randomTableSuffix();
+        assertUpdate("CREATE TABLE " + tableName + " WITH (format_version = 2) AS SELECT * FROM tpch.tiny.nation", 25);
+        assertEquals(loadTable(tableName).operations().current().formatVersion(), 2);
+        assertThatThrownBy(() -> query("ALTER TABLE " + tableName + " SET PROPERTIES format_version = 42"))
+                .hasMessage("Unable to set catalog 'iceberg' table property 'format_version' to [42]: format_version must be between 1 and 2");
     }
 
     private void writeEqualityDeleteToNationTable(Table icebergTable)
@@ -183,13 +233,27 @@ public class TestIcebergV2
 
     private Table updateTableToV2(String tableName)
     {
-        IcebergTableOperationsProvider tableOperationsProvider = new FileMetastoreTableOperationsProvider(new HdfsFileIoProvider(hdfsEnvironment));
-        BaseTable table = (BaseTable) loadIcebergTable(metastore, tableOperationsProvider, SESSION, new SchemaTableName("tpch", tableName));
-
+        BaseTable table = loadTable(tableName);
         TableOperations operations = table.operations();
         TableMetadata currentMetadata = operations.current();
         operations.commit(currentMetadata, currentMetadata.upgradeToFormatVersion(2));
 
         return table;
+    }
+
+    private BaseTable loadTable(String tableName)
+    {
+        IcebergTableOperationsProvider tableOperationsProvider = new FileMetastoreTableOperationsProvider(new HdfsFileIoProvider(hdfsEnvironment));
+        TrinoCatalog catalog = new TrinoHiveCatalog(
+                new CatalogName("hive"),
+                CachingHiveMetastore.memoizeMetastore(metastore, 1000),
+                hdfsEnvironment,
+                new TestingTypeManager(),
+                tableOperationsProvider,
+                "test",
+                false,
+                false,
+                false);
+        return (BaseTable) loadIcebergTable(catalog, tableOperationsProvider, SESSION, new SchemaTableName("tpch", tableName));
     }
 }

@@ -215,6 +215,7 @@ import io.trino.sql.tree.TimeLiteral;
 import io.trino.sql.tree.TimestampLiteral;
 import io.trino.sql.tree.TransactionAccessMode;
 import io.trino.sql.tree.TransactionMode;
+import io.trino.sql.tree.Trim;
 import io.trino.sql.tree.TruncateTable;
 import io.trino.sql.tree.TryExpression;
 import io.trino.sql.tree.TypeParameter;
@@ -2044,7 +2045,7 @@ class AstBuilder
 
     /**
      * Returns the corresponding {@link FunctionCall} for the `LISTAGG` primary expression.
-     *
+     * <p>
      * Although the syntax tree should represent the structure of the original parsed query
      * as closely as possible and any semantic interpretation should be part of the
      * analysis/planning phase, in case of `LISTAGG` aggregation function it is more pragmatic
@@ -2098,6 +2099,34 @@ class AstBuilder
                 Optional.empty(),
                 Optional.empty(),
                 arguments);
+    }
+
+    @Override
+    public Node visitTrim(SqlBaseParser.TrimContext context)
+    {
+        if (context.FROM() != null && context.trimsSpecification() == null && context.trimChar == null) {
+            throw parseError("The 'trim' function must have specification, char or both arguments when it takes FROM", context);
+        }
+
+        Trim.Specification specification = context.trimsSpecification() == null ? Trim.Specification.BOTH : toTrimSpecification((Token) context.trimsSpecification().getChild(0).getPayload());
+        return new Trim(
+                getLocation(context),
+                specification,
+                (Expression) visit(context.trimSource),
+                visitIfPresent(context.trimChar, Expression.class));
+    }
+
+    private static Trim.Specification toTrimSpecification(Token token)
+    {
+        switch (token.getType()) {
+            case SqlBaseLexer.BOTH:
+                return Trim.Specification.BOTH;
+            case SqlBaseLexer.LEADING:
+                return Trim.Specification.LEADING;
+            case SqlBaseLexer.TRAILING:
+                return Trim.Specification.TRAILING;
+        }
+        throw new IllegalArgumentException("Unsupported trim specification: " + token.getText());
     }
 
     @Override
@@ -3281,5 +3310,19 @@ class AstBuilder
                 return QueryPeriod.RangeType.VERSION;
         }
         throw new IllegalArgumentException("Unsupported query period range type: " + token.getText());
+    }
+
+    private static Trim.Specification toTrimSpecification(String functionName)
+    {
+        requireNonNull(functionName, "functionName is null");
+        switch (functionName) {
+            case "trim":
+                return Trim.Specification.BOTH;
+            case "ltrim":
+                return Trim.Specification.LEADING;
+            case "rtrim":
+                return Trim.Specification.TRAILING;
+        }
+        throw new IllegalArgumentException("Unsupported trim specification: " + functionName);
     }
 }

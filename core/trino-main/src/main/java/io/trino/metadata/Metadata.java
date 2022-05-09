@@ -17,8 +17,6 @@ import com.google.common.util.concurrent.ListenableFuture;
 import io.airlift.slice.Slice;
 import io.trino.Session;
 import io.trino.connector.CatalogName;
-import io.trino.operator.aggregation.AggregationMetadata;
-import io.trino.operator.window.WindowFunctionSupplier;
 import io.trino.spi.TrinoException;
 import io.trino.spi.connector.AggregateFunction;
 import io.trino.spi.connector.AggregationApplicationResult;
@@ -47,7 +45,6 @@ import io.trino.spi.connector.TableColumnsMetadata;
 import io.trino.spi.connector.TableScanRedirectApplicationResult;
 import io.trino.spi.connector.TopNApplicationResult;
 import io.trino.spi.expression.ConnectorExpression;
-import io.trino.spi.function.InvocationConvention;
 import io.trino.spi.function.OperatorType;
 import io.trino.spi.predicate.TupleDomain;
 import io.trino.spi.security.GrantInfo;
@@ -103,6 +100,8 @@ public interface Metadata
 
     void finishTableExecute(Session session, TableExecuteHandle handle, Collection<Slice> fragments, List<Object> tableExecuteState);
 
+    void executeTableExecute(Session session, TableExecuteHandle handle);
+
     TableProperties getTableProperties(Session session, TableHandle handle);
 
     /**
@@ -140,12 +139,13 @@ public interface Metadata
     TableMetadata getTableMetadata(Session session, TableHandle tableHandle);
 
     /**
-     * Return statistics for specified table for given filtering contraint.
+     * Return statistics for specified table.
      */
-    TableStatistics getTableStatistics(Session session, TableHandle tableHandle, Constraint constraint);
+    TableStatistics getTableStatistics(Session session, TableHandle tableHandle);
 
     /**
-     * Get the names that match the specified table prefix (never null).
+     * Get the relation names that match the specified table prefix (never null).
+     * This includes all relations (e.g. tables, views, materialized views).
      */
     List<QualifiedObjectName> listTables(Session session, QualifiedTablePrefix prefix);
 
@@ -602,9 +602,7 @@ public interface Metadata
     // Functions
     //
 
-    void addFunctions(List<? extends SqlFunction> functions);
-
-    List<FunctionMetadata> listFunctions();
+    Collection<FunctionMetadata> listFunctions(Session session);
 
     ResolvedFunction decodeFunction(QualifiedName name);
 
@@ -626,17 +624,11 @@ public interface Metadata
      * Is the named function an aggregation function?  This does not need type parameters
      * because overloads between aggregation and other function types are not allowed.
      */
-    boolean isAggregationFunction(QualifiedName name);
+    boolean isAggregationFunction(Session session, QualifiedName name);
 
-    FunctionMetadata getFunctionMetadata(ResolvedFunction resolvedFunction);
+    FunctionMetadata getFunctionMetadata(Session session, ResolvedFunction resolvedFunction);
 
-    AggregationFunctionMetadata getAggregationFunctionMetadata(ResolvedFunction resolvedFunction);
-
-    WindowFunctionSupplier getWindowFunctionImplementation(ResolvedFunction resolvedFunction);
-
-    AggregationMetadata getAggregateFunctionImplementation(ResolvedFunction resolvedFunction);
-
-    FunctionInvoker getScalarFunctionInvoker(ResolvedFunction resolvedFunction, InvocationConvention invocationConvention);
+    AggregationFunctionMetadata getAggregationFunctionMetadata(Session session, ResolvedFunction resolvedFunction);
 
     /**
      * Creates the specified materialized view with the specified view definition.
@@ -708,6 +700,16 @@ public interface Metadata
      * Verifies that a version is valid for a given table
      */
     boolean isValidTableVersion(Session session, QualifiedObjectName tableName, TableVersion version);
+
+    /**
+     * Returns true if the connector reports number of written bytes for an existing table. Otherwise, it returns false.
+     */
+    boolean supportsReportingWrittenBytes(Session session, TableHandle tableHandle);
+
+    /**
+     * Returns true if the connector reports number of written bytes for a new table. Otherwise, it returns false.
+     */
+    boolean supportsReportingWrittenBytes(Session session, QualifiedObjectName tableName, Map<String, Object> tableProperties);
 
     /**
      * Returns a table handle for the specified table name with a specified version

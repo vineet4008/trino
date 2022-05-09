@@ -29,6 +29,7 @@ import javax.validation.constraints.NotNull;
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 
+import static com.google.common.base.Preconditions.checkArgument;
 import static io.airlift.units.DataSize.Unit.GIGABYTE;
 import static java.util.concurrent.TimeUnit.MINUTES;
 import static java.util.concurrent.TimeUnit.SECONDS;
@@ -76,9 +77,14 @@ public class QueryManagerConfig
     private Duration requiredWorkersMaxWait = new Duration(5, TimeUnit.MINUTES);
 
     private RetryPolicy retryPolicy = RetryPolicy.NONE;
-    private int retryAttempts = 4;
+    private int queryRetryAttempts = 4;
+    private int taskRetryAttemptsPerTask = 4;
+    private int taskRetryAttemptsOverall = Integer.MAX_VALUE;
     private Duration retryInitialDelay = new Duration(10, SECONDS);
     private Duration retryMaxDelay = new Duration(1, MINUTES);
+    private double retryDelayScaleFactor = 2.0;
+
+    private int maxTasksWaitingForNodePerStage = 5;
 
     private DataSize faultTolerantExecutionTargetTaskInputSize = DataSize.of(1, GIGABYTE);
 
@@ -414,15 +420,42 @@ public class QueryManagerConfig
     }
 
     @Min(0)
-    public int getRetryAttempts()
+    public int getQueryRetryAttempts()
     {
-        return retryAttempts;
+        return queryRetryAttempts;
     }
 
-    @Config("retry-attempts")
-    public QueryManagerConfig setRetryAttempts(int retryAttempts)
+    @Config("query-retry-attempts")
+    @LegacyConfig("retry-attempts")
+    public QueryManagerConfig setQueryRetryAttempts(int queryRetryAttempts)
     {
-        this.retryAttempts = retryAttempts;
+        this.queryRetryAttempts = queryRetryAttempts;
+        return this;
+    }
+
+    @Min(0)
+    public int getTaskRetryAttemptsOverall()
+    {
+        return taskRetryAttemptsOverall;
+    }
+
+    @Config("task-retry-attempts-overall")
+    public QueryManagerConfig setTaskRetryAttemptsOverall(int taskRetryAttemptsOverall)
+    {
+        this.taskRetryAttemptsOverall = taskRetryAttemptsOverall;
+        return this;
+    }
+
+    @Min(0)
+    public int getTaskRetryAttemptsPerTask()
+    {
+        return taskRetryAttemptsPerTask;
+    }
+
+    @Config("task-retry-attempts-per-task")
+    public QueryManagerConfig setTaskRetryAttemptsPerTask(int taskRetryAttemptsPerTask)
+    {
+        this.taskRetryAttemptsPerTask = taskRetryAttemptsPerTask;
         return this;
     }
 
@@ -451,6 +484,35 @@ public class QueryManagerConfig
     public QueryManagerConfig setRetryMaxDelay(Duration retryMaxDelay)
     {
         this.retryMaxDelay = retryMaxDelay;
+        return this;
+    }
+
+    @NotNull
+    public double getRetryDelayScaleFactor()
+    {
+        return retryDelayScaleFactor;
+    }
+
+    @Config("retry-delay-scale-factor")
+    @ConfigDescription("Factor by which retry delay is scaled on subsequent failures")
+    public QueryManagerConfig setRetryDelayScaleFactor(double retryDelayScaleFactor)
+    {
+        checkArgument(retryDelayScaleFactor >= 1.0, "retry-delay-scale-factor must be greater or equal to 1");
+        this.retryDelayScaleFactor = retryDelayScaleFactor;
+        return this;
+    }
+
+    @Min(1)
+    public int getMaxTasksWaitingForNodePerStage()
+    {
+        return maxTasksWaitingForNodePerStage;
+    }
+
+    @Config("max-tasks-waiting-for-node-per-stage")
+    @ConfigDescription("Maximum possible number of tasks waiting for node allocation per stage before scheduling of new tasks for stage is paused")
+    public QueryManagerConfig setMaxTasksWaitingForNodePerStage(int maxTasksWaitingForNodePerStage)
+    {
+        this.maxTasksWaitingForNodePerStage = maxTasksWaitingForNodePerStage;
         return this;
     }
 

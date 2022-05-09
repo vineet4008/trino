@@ -16,11 +16,13 @@ package io.trino.plugin.redis;
 import com.google.common.base.Splitter;
 import com.google.common.collect.ImmutableSet;
 import io.airlift.configuration.Config;
+import io.airlift.configuration.ConfigDescription;
 import io.airlift.configuration.ConfigSecuritySensitive;
 import io.airlift.units.Duration;
 import io.airlift.units.MinDuration;
 import io.trino.spi.HostAddress;
 
+import javax.validation.constraints.Min;
 import javax.validation.constraints.NotNull;
 import javax.validation.constraints.Size;
 
@@ -35,59 +37,17 @@ public class RedisConnectorConfig
 {
     private static final int REDIS_DEFAULT_PORT = 6379;
 
-    /**
-     * Seed nodes for Redis cluster. At least one must exist.
-     */
     private Set<HostAddress> nodes = ImmutableSet.of();
-
-    /**
-     * Count parameter for Redis scan command.
-     */
     private int redisScanCount = 100;
-
-    /**
-     * Index of the Redis DB to connect to.
-     */
+    private int redisMaxKeysPerFetch = 100;
     private int redisDataBaseIndex;
-
-    /**
-     * delimiter for separating schema name and table name in the KEY prefix .
-     */
     private char redisKeyDelimiter = ':';
-
-    /**
-     * password for a password-protected Redis server
-     */
     private String redisPassword;
-
-    /**
-     * Timeout to connect to Redis.
-     */
     private Duration redisConnectTimeout = new Duration(2000, MILLISECONDS);
-
-    /**
-     * The schema name to use in the connector.
-     */
     private String defaultSchema = "default";
-
-    /**
-     * Set of tables known to this connector. For each table, a description file may be present in the catalog folder which describes columns for the given table.
-     */
     private Set<String> tableNames = ImmutableSet.of();
-
-    /**
-     * Folder holding the JSON description files for Redis values.
-     */
     private File tableDescriptionDir = new File("etc/redis/");
-
-    /**
-     * Whether internal columns are shown in table metadata or not. Default is no.
-     */
     private boolean hideInternalColumns = true;
-
-    /**
-     * Whether Redis key string follows "schema:table:*" format
-     */
     private boolean keyPrefixSchemaTable;
 
     @NotNull
@@ -97,6 +57,7 @@ public class RedisConnectorConfig
     }
 
     @Config("redis.table-description-dir")
+    @ConfigDescription("Folder holding the JSON description files for Redis values")
     public RedisConnectorConfig setTableDescriptionDir(File tableDescriptionDir)
     {
         this.tableDescriptionDir = tableDescriptionDir;
@@ -110,6 +71,7 @@ public class RedisConnectorConfig
     }
 
     @Config("redis.table-names")
+    @ConfigDescription("Set of tables known to this connector. For each table, a description file may be present in the catalog folder which describes columns for the given table")
     public RedisConnectorConfig setTableNames(String tableNames)
     {
         this.tableNames = ImmutableSet.copyOf(Splitter.on(',').omitEmptyStrings().trimResults().split(tableNames));
@@ -123,6 +85,7 @@ public class RedisConnectorConfig
     }
 
     @Config("redis.default-schema")
+    @ConfigDescription("The schema name to use in the connector")
     public RedisConnectorConfig setDefaultSchema(String defaultSchema)
     {
         this.defaultSchema = defaultSchema;
@@ -136,6 +99,7 @@ public class RedisConnectorConfig
     }
 
     @Config("redis.nodes")
+    @ConfigDescription("Seed nodes for Redis cluster. At least one must exist")
     public RedisConnectorConfig setNodes(String nodes)
     {
         this.nodes = (nodes == null) ? null : parseNodes(nodes);
@@ -148,9 +112,24 @@ public class RedisConnectorConfig
     }
 
     @Config("redis.scan-count")
+    @ConfigDescription("Count parameter for Redis scan command")
     public RedisConnectorConfig setRedisScanCount(int redisScanCount)
     {
         this.redisScanCount = redisScanCount;
+        return this;
+    }
+
+    @Min(1)
+    public int getRedisMaxKeysPerFetch()
+    {
+        return redisMaxKeysPerFetch;
+    }
+
+    @Config("redis.max-keys-per-fetch")
+    @ConfigDescription("Get values associated with the specified number of keys in the command such as MGET(key...)")
+    public RedisConnectorConfig setRedisMaxKeysPerFetch(int redisMaxKeysPerFetch)
+    {
+        this.redisMaxKeysPerFetch = redisMaxKeysPerFetch;
         return this;
     }
 
@@ -160,6 +139,7 @@ public class RedisConnectorConfig
     }
 
     @Config("redis.database-index")
+    @ConfigDescription("Index of the Redis DB to connect to")
     public RedisConnectorConfig setRedisDataBaseIndex(int redisDataBaseIndex)
     {
         this.redisDataBaseIndex = redisDataBaseIndex;
@@ -173,6 +153,7 @@ public class RedisConnectorConfig
     }
 
     @Config("redis.connect-timeout")
+    @ConfigDescription("Timeout to connect to Redis")
     public RedisConnectorConfig setRedisConnectTimeout(String redisConnectTimeout)
     {
         this.redisConnectTimeout = Duration.valueOf(redisConnectTimeout);
@@ -185,6 +166,7 @@ public class RedisConnectorConfig
     }
 
     @Config("redis.key-delimiter")
+    @ConfigDescription("Delimiter for separating schema name and table name in the KEY prefix")
     public RedisConnectorConfig setRedisKeyDelimiter(String redisKeyDelimiter)
     {
         this.redisKeyDelimiter = redisKeyDelimiter.charAt(0);
@@ -198,6 +180,7 @@ public class RedisConnectorConfig
 
     @Config("redis.password")
     @ConfigSecuritySensitive
+    @ConfigDescription("Password for a password-protected Redis server")
     public RedisConnectorConfig setRedisPassword(String redisPassword)
     {
         this.redisPassword = redisPassword;
@@ -210,6 +193,7 @@ public class RedisConnectorConfig
     }
 
     @Config("redis.hide-internal-columns")
+    @ConfigDescription("Whether internal columns are shown in table metadata or not. Default is no")
     public RedisConnectorConfig setHideInternalColumns(boolean hideInternalColumns)
     {
         this.hideInternalColumns = hideInternalColumns;
@@ -222,6 +206,7 @@ public class RedisConnectorConfig
     }
 
     @Config("redis.key-prefix-schema-table")
+    @ConfigDescription("Whether Redis key string follows \"schema:table:*\" format")
     public RedisConnectorConfig setKeyPrefixSchemaTable(boolean keyPrefixSchemaTable)
     {
         this.keyPrefixSchemaTable = keyPrefixSchemaTable;

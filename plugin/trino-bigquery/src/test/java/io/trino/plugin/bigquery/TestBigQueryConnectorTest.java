@@ -37,8 +37,6 @@ import static java.lang.String.format;
 import static java.util.Locale.ENGLISH;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.testng.Assert.assertFalse;
-import static org.testng.Assert.assertTrue;
 
 public class TestBigQueryConnectorTest
         extends BaseConnectorTest
@@ -80,33 +78,6 @@ public class TestBigQueryConnectorTest
             default:
                 return super.hasBehavior(connectorBehavior);
         }
-    }
-
-    @Test
-    @Override
-    public void testCreateSchema()
-    {
-        String schemaName = "test_schema_create_" + randomTableSuffix();
-        assertThat(computeActual("SHOW SCHEMAS").getOnlyColumnAsSet()).doesNotContain(schemaName);
-        assertUpdate("CREATE SCHEMA " + schemaName);
-        assertUpdate("CREATE SCHEMA IF NOT EXISTS " + schemaName);
-
-        // verify listing of new schema
-        assertThat(computeActual("SHOW SCHEMAS").getOnlyColumnAsSet()).contains(schemaName);
-
-        // verify SHOW CREATE SCHEMA works
-        assertThat((String) computeScalar("SHOW CREATE SCHEMA " + schemaName))
-                .startsWith(format("CREATE SCHEMA %s.%s", getSession().getCatalog().orElseThrow(), schemaName));
-
-        // try to create duplicate schema
-        assertQueryFails("CREATE SCHEMA " + schemaName, format("line 1:1: Schema '.*\\.%s' already exists", schemaName));
-
-        // cleanup
-        assertUpdate("DROP SCHEMA " + schemaName);
-
-        // verify DROP SCHEMA for non-existing schema
-        assertQueryFails("DROP SCHEMA " + schemaName, format("line 1:1: Schema '.*\\.%s' does not exist", schemaName));
-        assertUpdate("DROP SCHEMA IF EXISTS " + schemaName);
     }
 
     @Test
@@ -247,17 +218,6 @@ public class TestBigQueryConnectorTest
     }
 
     @Test
-    public void testDropTable()
-    {
-        String tableName = "test_drop_table_" + randomTableSuffix();
-        assertUpdate("CREATE TABLE " + tableName + "(col bigint)");
-        assertTrue(getQueryRunner().tableExists(getSession(), tableName));
-
-        assertUpdate("DROP TABLE " + tableName);
-        assertFalse(getQueryRunner().tableExists(getSession(), tableName));
-    }
-
-    @Test
     @Override
     public void testRenameTable()
     {
@@ -331,7 +291,89 @@ public class TestBigQueryConnectorTest
         return nullToEmpty(exception.getMessage()).matches(".*(Fields must contain only letters, numbers, and underscores, start with a letter or underscore, and be at most 300 characters long).*");
     }
 
-    @Test(enabled = false)
+    @Test
+    public void testPartitionDateColumn()
+    {
+        try (TestTable table = new TestTable(bigQuerySqlExecutor, "test.partition_date_column", "(value INT64) PARTITION BY _PARTITIONDATE")) {
+            // BigQuery doesn't allow omitting column list for ingestion-time partitioned table
+            // Using _PARTITIONTIME special column because _PARTITIONDATE is unsupported in INSERT statement
+            onBigQuery(format("INSERT INTO %s (_PARTITIONTIME, value) VALUES ('1960-01-01', 1)", table.getName()));
+            onBigQuery(format("INSERT INTO %s (_PARTITIONTIME, value) VALUES ('2159-12-31', 2)", table.getName()));
+
+            assertThat(query("SELECT value, \"$partition_date\" FROM " + table.getName()))
+                    .matches("VALUES (BIGINT '1', DATE '1960-01-01'), (BIGINT '2', DATE '2159-12-31')");
+
+            assertQuery(format("SELECT value FROM %s WHERE \"$partition_date\" = DATE '1960-01-01'", table.getName()), "VALUES 1");
+            assertQuery(format("SELECT value FROM %s WHERE \"$partition_date\" = DATE '2159-12-31'", table.getName()), "VALUES 2");
+
+            // Verify DESCRIBE result doesn't have hidden columns
+            assertThat(query("DESCRIBE " + table.getName())).projected(0).skippingTypesCheck().matches("VALUES 'value'");
+        }
+    }
+
+    @Test
+    public void testPartitionTimeColumn()
+    {
+        try (TestTable table = new TestTable(bigQuerySqlExecutor, "test.partition_time_column", "(value INT64) PARTITION BY DATE_TRUNC(_PARTITIONTIME, HOUR)")) {
+            // BigQuery doesn't allow omitting column list for ingestion-time partitioned table
+            onBigQuery(format("INSERT INTO %s (_PARTITIONTIME, value) VALUES ('1960-01-01 00:00:00', 1)", table.getName()));
+            onBigQuery(format("INSERT INTO %s (_PARTITIONTIME, value) VALUES ('2159-12-31 23:00:00', 2)", table.getName())); // Hour and minute must be zero
+
+            assertThat(query("SELECT value, \"$partition_time\" FROM " + table.getName()))
+                    .matches("VALUES (BIGINT '1', CAST('1960-01-01 00:00:00 UTC' AS TIMESTAMP(6) WITH TIME ZONE)), (BIGINT '2', CAST('2159-12-31 23:00:00 UTC' AS TIMESTAMP(6) WITH TIME ZONE))");
+
+            assertQuery(format("SELECT value FROM %s WHERE \"$partition_time\" = CAST('1960-01-01 00:00:00 UTC' AS TIMESTAMP(6) WITH TIME ZONE)", table.getName()), "VALUES 1");
+            assertQuery(format("SELECT value FROM %s WHERE \"$partition_time\" = CAST('2159-12-31 23:00:00 UTC' AS TIMESTAMP(6) WITH TIME ZONE)", table.getName()), "VALUES 2");
+
+            // Verify DESCRIBE result doesn't have hidden columns
+            assertThat(query("DESCRIBE " + table.getName())).projected(0).skippingTypesCheck().matches("VALUES 'value'");
+        }
+    }
+
+    @Test
+    public void testIngestionTimePartitionedTableInvalidValue()
+    {
+        try (TestTable table = new TestTable(bigQuerySqlExecutor, "test.invalid_ingestion_time", "(value INT64) PARTITION BY _PARTITIONDATE")) {
+            assertThatThrownBy(() -> onBigQuery(format("INSERT INTO %s (_PARTITIONTIME, value) VALUES ('0001-01-01', 1)", table.getName())))
+                    .hasMessageMatching("Cannot set pseudo column for automatic partitioned table.* Supported values are in the range \\[1960-01-01, 2159-12-31]");
+
+            assertThatThrownBy(() -> onBigQuery(format("INSERT INTO %s (_PARTITIONTIME, value) VALUES ('1959-12-31', 1)", table.getName())))
+                    .hasMessageMatching("Cannot set pseudo column for automatic partitioned table.* Supported values are in the range \\[1960-01-01, 2159-12-31]");
+
+            assertThatThrownBy(() -> onBigQuery(format("INSERT INTO %s (_PARTITIONTIME, value) VALUES ('2160-01-01', 1)", table.getName())))
+                    .hasMessageMatching("Cannot set pseudo column for automatic partitioned table.* Supported values are in the range \\[1960-01-01, 2159-12-31]");
+
+            assertThatThrownBy(() -> onBigQuery(format("INSERT INTO %s (_PARTITIONTIME, value) VALUES ('9999-12-31', 1)", table.getName())))
+                    .hasMessageMatching("Cannot set pseudo column for automatic partitioned table.* Supported values are in the range \\[1960-01-01, 2159-12-31]");
+
+            assertThatThrownBy(() -> onBigQuery(format("INSERT INTO %s (_PARTITIONTIME, value) VALUES (NULL, 1)", table.getName())))
+                    .hasMessageContaining("Cannot set timestamp pseudo column for automatic partitioned table to NULL");
+        }
+    }
+
+    @Test
+    public void testPseudoColumnNotExist()
+    {
+        // Normal table without partitions
+        try (TestTable table = new TestTable(bigQuerySqlExecutor, "test.non_partitioned_table", "(value INT64, ts TIMESTAMP)")) {
+            assertQueryFails("SELECT \"$partition_date\" FROM " + table.getName(), ".* Column '\\$partition_date' cannot be resolved");
+            assertQueryFails("SELECT \"$partition_time\" FROM " + table.getName(), ".* Column '\\$partition_time' cannot be resolved");
+        }
+
+        // Time-unit partitioned table
+        try (TestTable table = new TestTable(bigQuerySqlExecutor, "test.time_unit_partition", "(value INT64, dt DATE) PARTITION BY dt")) {
+            assertQueryFails("SELECT \"$partition_date\" FROM " + table.getName(), ".* Column '\\$partition_date' cannot be resolved");
+            assertQueryFails("SELECT \"$partition_time\" FROM " + table.getName(), ".* Column '\\$partition_time' cannot be resolved");
+        }
+
+        // Integer-range partitioned table
+        try (TestTable table = new TestTable(bigQuerySqlExecutor, "test.integer_range_partition", "(value INT64, dt DATE) PARTITION BY RANGE_BUCKET(value, GENERATE_ARRAY(0, 100, 10))")) {
+            assertQueryFails("SELECT \"$partition_date\" FROM " + table.getName(), ".* Column '\\$partition_date' cannot be resolved");
+            assertQueryFails("SELECT \"$partition_time\" FROM " + table.getName(), ".* Column '\\$partition_time' cannot be resolved");
+        }
+    }
+
+    @Test
     public void testSelectFromHourlyPartitionedTable()
     {
         try (TestTable table = new TestTable(
@@ -343,7 +385,7 @@ public class TestBigQueryConnectorTest
         }
     }
 
-    @Test(enabled = false)
+    @Test
     public void testSelectFromYearlyPartitionedTable()
     {
         try (TestTable table = new TestTable(

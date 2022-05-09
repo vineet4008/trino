@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 
 import argparse
-import yaml
 import json
 import logging
 import sys
+import tempfile
+import unittest
+
+import yaml
 
 
 def main():
@@ -42,9 +45,19 @@ def main():
         default=logging.WARNING,
         help="Print info level logs",
     )
+    parser.add_argument(
+        "-t",
+        "--test",
+        action='store_true',
+        help="test this script instead of executing it",
+    )
 
     args = parser.parse_args()
     logging.basicConfig(level=args.loglevel)
+    if args.test:
+        sys.argv = [sys.argv[0]]
+        unittest.main()
+        return
     build(args.matrix, args.impacted, args.output)
 
 
@@ -53,24 +66,122 @@ def build(matrix_file, impacted_file, output_file):
     impacted = list(filter(None, [line.strip() for line in impacted_file.readlines()]))
     logging.info("Read matrix: %s", matrix)
     logging.info("Read impacted: %s", impacted)
-    include = []
-    for item in matrix.get("include", []):
-        modules = item.get("modules", [])
-        if isinstance(modules, str):
-            modules = [modules]
-        if impacted and not any(module in impacted for module in modules):
+
+    modules = []
+    for item in matrix.get("modules", []):
+        module = check_modules(item, impacted)
+        if module is None:
             logging.info("Excluding matrix section: %s", item)
             continue
-        include.append(
-            {
-                # concatenate because matrix values should be primitives
-                "modules": ",".join(modules),
-                "profile": item.get("profile", ""),
-            }
-        )
-    matrix["include"] = include
+        modules.append(module)
+    if "modules" in matrix:
+        matrix["modules"] = modules
+
+    include = []
+    for item in matrix.get("include", []):
+        modules = check_modules(item.get("modules", []), impacted)
+        if modules is None:
+            logging.info("Excluding matrix section: %s", item)
+            continue
+        item["modules"] = modules
+        include.append(item)
+    if "include" in matrix:
+        if include:
+            matrix["include"] = include
+        else:
+            del matrix["include"]
+
     json.dump(matrix, output_file)
     output_file.write("\n")
+
+
+def check_modules(modules, impacted):
+    if isinstance(modules, str):
+        modules = [modules]
+    if impacted and not any(module in impacted for module in modules):
+        return None
+    # concatenate because matrix values should be primitives
+    return ",".join(modules)
+
+
+class TestBuild(unittest.TestCase):
+    def test_build(self):
+        cases = [
+            # basic test
+            (
+                {
+                    "modules": ["a", "b"],
+                },
+                ["a"],
+                {
+                    "modules": ["a"],
+                },
+            ),
+            # include adds a new entry
+            (
+                {
+                    "modules": ["a", "b"],
+                    "include": [
+                        {"modules": "c"},
+                        {"modules": "d"},
+                    ],
+                },
+                ["a", "d"],
+                {
+                    "modules": ["a"],
+                    "include": [
+                        {"modules": "d"},
+                    ],
+                },
+            ),
+            # include entry overwrites one in matrix
+            (
+                {
+                    "modules": ["a", "b"],
+                    "include": [
+                        {"modules": "a", "options": "-Pprofile"},
+                    ],
+                },
+                ["a"],
+                {
+                    "modules": ["a"],
+                    "include": [
+                        {"modules": "a", "options": "-Pprofile"},
+                    ],
+                },
+            ),
+            # with excludes
+            (
+                {
+                    "modules": ["a", "b"],
+                    "exclude": ["b"],
+                },
+                ["a"],
+                {
+                    "modules": ["a"],
+                    "exclude": ["b"],
+                },
+            ),
+        ]
+        for matrix, impacted, expected in cases:
+            with self.subTest():
+                # given
+                matrix_file = tempfile.TemporaryFile("w+")
+                yaml.dump(matrix, matrix_file)
+                matrix_file.seek(0)
+                impacted_file = tempfile.TemporaryFile("w+")
+                impacted_file.write("\n".join(impacted))
+                impacted_file.seek(0)
+                output_file = tempfile.TemporaryFile("w+")
+                # when
+                build(matrix_file, impacted_file, output_file)
+                output_file.seek(0)
+                output = json.load(output_file)
+                # then
+                self.assertEqual(output, expected)
+                matrix_file.close()
+                impacted_file.close()
+                output_file.close()
 
 
 if __name__ == "__main__":

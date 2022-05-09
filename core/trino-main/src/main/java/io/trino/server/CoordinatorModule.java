@@ -60,9 +60,16 @@ import io.trino.execution.TaskStatus;
 import io.trino.execution.resourcegroups.InternalResourceGroupManager;
 import io.trino.execution.resourcegroups.LegacyResourceGroupConfigurationManager;
 import io.trino.execution.resourcegroups.ResourceGroupManager;
+import io.trino.execution.scheduler.BinPackingNodeAllocatorService;
+import io.trino.execution.scheduler.ConstantPartitionMemoryEstimator;
+import io.trino.execution.scheduler.FixedCountNodeAllocatorService;
+import io.trino.execution.scheduler.NodeAllocatorService;
+import io.trino.execution.scheduler.NodeSchedulerConfig;
+import io.trino.execution.scheduler.PartitionMemoryEstimatorFactory;
 import io.trino.execution.scheduler.SplitSchedulerStats;
 import io.trino.execution.scheduler.StageTaskSourceFactory;
 import io.trino.execution.scheduler.TaskDescriptorStorage;
+import io.trino.execution.scheduler.TaskExecutionStats;
 import io.trino.execution.scheduler.TaskSourceFactory;
 import io.trino.execution.scheduler.policy.AllAtOnceExecutionPolicy;
 import io.trino.execution.scheduler.policy.ExecutionPolicy;
@@ -127,6 +134,8 @@ import static io.airlift.http.client.HttpClientBinder.httpClientBinder;
 import static io.airlift.jaxrs.JaxrsBinder.jaxrsBinder;
 import static io.airlift.json.JsonCodecBinder.jsonCodecBinder;
 import static io.airlift.units.DataSize.Unit.MEGABYTE;
+import static io.trino.execution.scheduler.NodeSchedulerConfig.NodeAllocatorType.BIN_PACKING;
+import static io.trino.execution.scheduler.NodeSchedulerConfig.NodeAllocatorType.FIXED_COUNT;
 import static java.util.concurrent.Executors.newCachedThreadPool;
 import static java.util.concurrent.Executors.newScheduledThreadPool;
 import static java.util.concurrent.Executors.newSingleThreadScheduledExecutor;
@@ -209,6 +218,23 @@ public class CoordinatorModule
         bindLowMemoryKiller(LowMemoryKillerPolicy.TOTAL_RESERVATION_ON_BLOCKED_NODES, TotalReservationOnBlockedNodesLowMemoryKiller.class);
         newExporter(binder).export(ClusterMemoryManager.class).withGeneratedName();
 
+        // node allocator
+        install(conditionalModule(
+                NodeSchedulerConfig.class,
+                config -> FIXED_COUNT == config.getNodeAllocatorType(),
+                innerBinder -> {
+                    innerBinder.bind(NodeAllocatorService.class).to(FixedCountNodeAllocatorService.class).in(Scopes.SINGLETON);
+                    innerBinder.bind(PartitionMemoryEstimatorFactory.class).toInstance(ConstantPartitionMemoryEstimator::new);
+                }));
+        install(conditionalModule(
+                NodeSchedulerConfig.class,
+                config -> BIN_PACKING == config.getNodeAllocatorType(),
+                innerBinder -> {
+                    innerBinder.bind(BinPackingNodeAllocatorService.class).in(Scopes.SINGLETON);
+                    innerBinder.bind(NodeAllocatorService.class).to(BinPackingNodeAllocatorService.class);
+                    innerBinder.bind(PartitionMemoryEstimatorFactory.class).to(BinPackingNodeAllocatorService.class);
+                }));
+
         // node monitor
         binder.bind(ClusterSizeMonitor.class).in(Scopes.SINGLETON);
         newExporter(binder).export(ClusterSizeMonitor.class).withGeneratedName();
@@ -256,6 +282,7 @@ public class CoordinatorModule
         jsonCodecBinder(binder).bindJsonCodec(TaskInfo.class);
         jsonCodecBinder(binder).bindJsonCodec(TaskStatus.class);
         jsonCodecBinder(binder).bindJsonCodec(TaskUpdateRequest.class);
+        jsonCodecBinder(binder).bindJsonCodec(FailTaskRequest.class);
         jsonCodecBinder(binder).bindJsonCodec(VersionedDynamicFilterDomains.class);
         binder.bind(RemoteTaskFactory.class).to(HttpRemoteTaskFactory.class).in(Scopes.SINGLETON);
         newExporter(binder).export(RemoteTaskFactory.class).withGeneratedName();
@@ -289,6 +316,9 @@ public class CoordinatorModule
         binder.bind(TaskSourceFactory.class).to(StageTaskSourceFactory.class).in(Scopes.SINGLETON);
         binder.bind(TaskDescriptorStorage.class).in(Scopes.SINGLETON);
         newExporter(binder).export(TaskDescriptorStorage.class).withGeneratedName();
+
+        binder.bind(TaskExecutionStats.class).in(Scopes.SINGLETON);
+        newExporter(binder).export(TaskExecutionStats.class).withGeneratedName();
 
         MapBinder<String, ExecutionPolicy> executionPolicyBinder = newMapBinder(binder, String.class, ExecutionPolicy.class);
         executionPolicyBinder.addBinding("all-at-once").to(AllAtOnceExecutionPolicy.class);

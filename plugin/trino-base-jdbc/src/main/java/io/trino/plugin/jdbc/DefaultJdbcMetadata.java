@@ -94,12 +94,14 @@ public class DefaultJdbcMetadata
     private static final String SYNTHETIC_COLUMN_NAME_PREFIX = "_pfgnrtd_";
 
     private final JdbcClient jdbcClient;
+    private final boolean precalculateStatisticsForPushdown;
 
     private final AtomicReference<Runnable> rollbackAction = new AtomicReference<>();
 
-    public DefaultJdbcMetadata(JdbcClient jdbcClient)
+    public DefaultJdbcMetadata(JdbcClient jdbcClient, boolean precalculateStatisticsForPushdown)
     {
         this.jdbcClient = requireNonNull(jdbcClient, "jdbcClient is null");
+        this.precalculateStatisticsForPushdown = precalculateStatisticsForPushdown;
     }
 
     @Override
@@ -210,8 +212,8 @@ public class DefaultJdbcMetadata
 
         return Optional.of(
                 remainingExpression.isPresent()
-                        ? new ConstraintApplicationResult<>(handle, remainingFilter, remainingExpression.get(), false)
-                        : new ConstraintApplicationResult<>(handle, remainingFilter, false));
+                        ? new ConstraintApplicationResult<>(handle, remainingFilter, remainingExpression.get(), precalculateStatisticsForPushdown)
+                        : new ConstraintApplicationResult<>(handle, remainingFilter, precalculateStatisticsForPushdown));
     }
 
     private JdbcTableHandle flushAttributesAsQuery(ConnectorSession session, JdbcTableHandle handle)
@@ -270,7 +272,7 @@ public class DefaultJdbcMetadata
                                 assignment.getValue(),
                                 ((JdbcColumnHandle) assignment.getValue()).getColumnType()))
                         .collect(toImmutableList()),
-                false));
+                precalculateStatisticsForPushdown));
     }
 
     @Override
@@ -364,7 +366,7 @@ public class DefaultJdbcMetadata
                 handle.getAllReferencedTables(),
                 nextSyntheticColumnId);
 
-        return Optional.of(new AggregationApplicationResult<>(handle, projections.build(), resultAssignments.build(), ImmutableMap.of(), false));
+        return Optional.of(new AggregationApplicationResult<>(handle, projections.build(), resultAssignments.build(), ImmutableMap.of(), precalculateStatisticsForPushdown));
     }
 
     @Override
@@ -449,7 +451,7 @@ public class DefaultJdbcMetadata
                         nextSyntheticColumnId),
                 ImmutableMap.copyOf(newLeftColumns),
                 ImmutableMap.copyOf(newRightColumns),
-                false));
+                precalculateStatisticsForPushdown));
     }
 
     private static Optional<JdbcColumnHandle> getVariableColumnHandle(Map<String, ColumnHandle> assignments, ConnectorExpression expression)
@@ -505,7 +507,7 @@ public class DefaultJdbcMetadata
                 handle.getOtherReferencedTables(),
                 handle.getNextSyntheticColumnId());
 
-        return Optional.of(new LimitApplicationResult<>(handle, jdbcClient.isLimitGuaranteed(session), false));
+        return Optional.of(new LimitApplicationResult<>(handle, jdbcClient.isLimitGuaranteed(session), precalculateStatisticsForPushdown));
     }
 
     @Override
@@ -554,7 +556,7 @@ public class DefaultJdbcMetadata
                 handle.getOtherReferencedTables(),
                 handle.getNextSyntheticColumnId());
 
-        return Optional.of(new TopNApplicationResult<>(sortedTableHandle, jdbcClient.isTopNGuaranteed(session), false));
+        return Optional.of(new TopNApplicationResult<>(sortedTableHandle, jdbcClient.isTopNGuaranteed(session), precalculateStatisticsForPushdown));
     }
 
     @Override
@@ -592,7 +594,8 @@ public class DefaultJdbcMetadata
                 jdbcClient.getColumns(session, handle).stream()
                         .map(JdbcColumnHandle::getColumnMetadata)
                         .collect(toImmutableList()),
-                jdbcClient.getTableProperties(session, handle));
+                jdbcClient.getTableProperties(session, handle),
+                getTableComment(handle));
     }
 
     public static SchemaTableName getSchemaTableName(JdbcTableHandle handle)
@@ -601,6 +604,11 @@ public class DefaultJdbcMetadata
                 ? handle.getRequiredNamedRelation().getSchemaTableName()
                 // TODO (https://github.com/trinodb/trino/issues/6694) SchemaTableName should not be required for synthetic ConnectorTableHandle
                 : new SchemaTableName("_generated", "_generated_query");
+    }
+
+    public static Optional<String> getTableComment(JdbcTableHandle handle)
+    {
+        return handle.isNamedRelation() ? handle.getRequiredNamedRelation().getComment() : Optional.empty();
     }
 
     @Override
@@ -744,6 +752,14 @@ public class DefaultJdbcMetadata
     }
 
     @Override
+    public void setTableComment(ConnectorSession session, ConnectorTableHandle table, Optional<String> comment)
+    {
+        JdbcTableHandle tableHandle = (JdbcTableHandle) table;
+        verify(!tableHandle.isSynthetic(), "Not a table reference: %s", tableHandle);
+        jdbcClient.setTableComment(session, tableHandle, comment);
+    }
+
+    @Override
     public void setColumnComment(ConnectorSession session, ConnectorTableHandle table, ColumnHandle column, Optional<String> comment)
     {
         JdbcTableHandle tableHandle = (JdbcTableHandle) table;
@@ -795,10 +811,11 @@ public class DefaultJdbcMetadata
     }
 
     @Override
-    public TableStatistics getTableStatistics(ConnectorSession session, ConnectorTableHandle tableHandle, Constraint constraint)
+    public TableStatistics getTableStatistics(ConnectorSession session, ConnectorTableHandle tableHandle)
     {
         JdbcTableHandle handle = (JdbcTableHandle) tableHandle;
-        return jdbcClient.getTableStatistics(session, handle, constraint.getSummary());
+        // TODO passing constraint to getTableStatistics is deprecated, remove it from the JdbcClient interface
+        return jdbcClient.getTableStatistics(session, handle, Constraint.alwaysTrue().getSummary());
     }
 
     @Override

@@ -148,6 +148,14 @@ public interface ConnectorMetadata
     }
 
     /**
+     * Execute a {@link TableProcedureExecutionMode#coordinatorOnly() coordinator-only} table procedure.
+     */
+    default void executeTableExecute(ConnectorSession session, ConnectorTableExecuteHandle tableExecuteHandle)
+    {
+        throw new TrinoException(GENERIC_INTERNAL_ERROR, "ConnectorMetadata executeTableExecute() is not implemented");
+    }
+
+    /**
      * Returns the system table for the specified table name, if one exists.
      * The system tables handled via {@link #getSystemTable} differ form those returned by {@link Connector#getSystemTables()}.
      * The former mechanism allows dynamic resolution of system tables, while the latter is
@@ -179,6 +187,17 @@ public interface ConnectorMetadata
             return Optional.of(left);
         }
         return Optional.empty();
+    }
+
+    /**
+     * Return schema table name for the specified table handle.
+     * This method is useful when requiring only {@link SchemaTableName} without other objects.
+     *
+     * @throws RuntimeException if table handle is no longer valid
+     */
+    default SchemaTableName getSchemaTableName(ConnectorSession session, ConnectorTableHandle table)
+    {
+        return getTableSchema(session, table).getTable();
     }
 
     /**
@@ -258,10 +277,21 @@ public interface ConnectorMetadata
 
     /**
      * Get statistics for table for given filtering constraint.
+     *
+     * @deprecated Use {@link #getTableStatistics(ConnectorSession, ConnectorTableHandle)}
      */
+    @Deprecated
     default TableStatistics getTableStatistics(ConnectorSession session, ConnectorTableHandle tableHandle, Constraint constraint)
     {
         return TableStatistics.empty();
+    }
+
+    /**
+     * Get statistics for table.
+     */
+    default TableStatistics getTableStatistics(ConnectorSession session, ConnectorTableHandle tableHandle)
+    {
+        return getTableStatistics(session, tableHandle, Constraint.alwaysTrue());
     }
 
     /**
@@ -1339,5 +1369,15 @@ public interface ConnectorMetadata
     default boolean isSupportedVersionType(ConnectorSession session, SchemaTableName tableName, PointerType pointerType, Type versioning)
     {
         throw new TrinoException(NOT_SUPPORTED, "This connector does not support versioned tables");
+    }
+
+    default boolean supportsReportingWrittenBytes(ConnectorSession session, SchemaTableName schemaTableName, Map<String, Object> tableProperties)
+    {
+        return false;
+    }
+
+    default boolean supportsReportingWrittenBytes(ConnectorSession session, ConnectorTableHandle connectorTableHandle)
+    {
+        return false;
     }
 }

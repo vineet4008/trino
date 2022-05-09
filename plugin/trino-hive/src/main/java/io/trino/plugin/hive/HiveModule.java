@@ -21,6 +21,7 @@ import com.google.inject.Scopes;
 import com.google.inject.multibindings.Multibinder;
 import io.airlift.event.client.EventClient;
 import io.trino.plugin.base.CatalogName;
+import io.trino.plugin.hive.fs.CachingDirectoryLister;
 import io.trino.plugin.hive.metastore.MetastoreConfig;
 import io.trino.plugin.hive.orc.OrcFileWriterFactory;
 import io.trino.plugin.hive.orc.OrcPageSourceFactory;
@@ -87,8 +88,6 @@ public class HiveModule
                 .setDefault().to(DefaultHiveMaterializedViewMetadataFactory.class).in(Scopes.SINGLETON);
         newOptionalBinder(binder, TransactionalMetadataFactory.class)
                 .setDefault().to(HiveMetadataFactory.class).in(Scopes.SINGLETON);
-        newOptionalBinder(binder, HiveTableRedirectionsProvider.class)
-                .setDefault().to(DefaultHiveTableRedirectionsProvider.class);
         binder.bind(HiveTransactionManager.class).in(Scopes.SINGLETON);
         binder.bind(ConnectorSplitManager.class).to(HiveSplitManager.class).in(Scopes.SINGLETON);
         newExporter(binder).export(ConnectorSplitManager.class).as(generator -> generator.generatedNameOf(HiveSplitManager.class));

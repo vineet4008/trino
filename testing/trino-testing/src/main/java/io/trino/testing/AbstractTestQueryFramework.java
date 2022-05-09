@@ -19,6 +19,7 @@ import com.google.common.collect.MoreCollectors;
 import com.google.errorprone.annotations.CanIgnoreReturnValue;
 import io.airlift.units.Duration;
 import io.trino.Session;
+import io.trino.execution.QueryState;
 import io.trino.execution.QueryStats;
 import io.trino.execution.warnings.WarningCollector;
 import io.trino.memory.LocalMemoryManager;
@@ -124,7 +125,7 @@ public abstract class AbstractTestQueryFramework
         }
         DistributedQueryRunner distributedQueryRunner = (DistributedQueryRunner) queryRunner;
         assertEventually(
-                new Duration(10, SECONDS),
+                new Duration(30, SECONDS),
                 new Duration(1, SECONDS),
                 () -> {
                     List<TestingTrinoServer> servers = distributedQueryRunner.getServers();
@@ -164,11 +165,13 @@ public abstract class AbstractTestQueryFramework
         queriesWithMemory.forEach(queryInfo -> {
             QueryId queryId = queryInfo.getQueryId();
             String querySql = queryInfo.getQuery();
+            QueryState queryState = queryInfo.getState();
             Long memoryReservation = queryReservations.getOrDefault(queryId, 0L);
             Map<String, Long> taggedMemoryReservation = queryTaggedReservations.getOrDefault(queryId, ImmutableMap.of());
 
             result.append(" " + queryId + ":\n");
             result.append("   SQL: " + querySql + "\n");
+            result.append("   state: " + queryState + "\n");
             result.append("   memoryReservation: " + memoryReservation + "\n");
             result.append("   taggedMemoryReservaton: " + taggedMemoryReservation + "\n");
         });

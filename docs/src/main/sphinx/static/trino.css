@@ -77,3 +77,9 @@ pre.literal-block {
 .copybtn:hover {
     cursor: copy;
 }
+
+.connector-logo {
+    float: right;
+    position: relative;
+    top: -5.5rem;
+}

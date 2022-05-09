@@ -32,6 +32,7 @@ import io.trino.memory.MemoryManagerConfig;
 import io.trino.memory.NodeMemoryConfig;
 import io.trino.metadata.AnalyzePropertyManager;
 import io.trino.metadata.ColumnPropertyManager;
+import io.trino.metadata.InternalFunctionBundle;
 import io.trino.metadata.MaterializedViewDefinition;
 import io.trino.metadata.MaterializedViewPropertyManager;
 import io.trino.metadata.Metadata;
@@ -164,7 +165,6 @@ import static io.trino.spi.type.VarcharType.createVarcharType;
 import static io.trino.sql.analyzer.StatementAnalyzerFactory.createTestingStatementAnalyzerFactory;
 import static io.trino.sql.parser.ParsingOptions.DecimalLiteralTreatment.AS_DECIMAL;
 import static io.trino.sql.parser.ParsingOptions.DecimalLiteralTreatment.AS_DOUBLE;
-import static io.trino.sql.planner.TestingPlannerContext.plannerContextBuilder;
 import static io.trino.testing.TestingAccessControlManager.TestingPrivilegeType.SELECT_COLUMN;
 import static io.trino.testing.TestingAccessControlManager.privilege;
 import static io.trino.testing.TestingEventListenerManager.emptyEventListenerManager;
@@ -5311,9 +5311,9 @@ public class TestAnalyzer
         accessControlManager.setSystemAccessControls(List.of(AllowAllSystemAccessControl.INSTANCE));
         this.accessControl = accessControlManager;
 
-        Metadata metadata = queryRunner.getMetadata();
-        metadata.addFunctions(ImmutableList.of(APPLY_FUNCTION));
-        plannerContext = plannerContextBuilder().withMetadata(metadata).build();
+        queryRunner.addFunctions(InternalFunctionBundle.builder().functions(APPLY_FUNCTION).build());
+        plannerContext = queryRunner.getPlannerContext();
+        Metadata metadata = plannerContext.getMetadata();
 
         TestingMetadata testingConnectorMetadata = new TestingMetadata();
         TestingConnector connector = new TestingConnector(testingConnectorMetadata);
@@ -5346,7 +5346,7 @@ public class TestAnalyzer
                 new ConnectorTableMetadata(table3, ImmutableList.of(
                         new ColumnMetadata("a", BIGINT),
                         new ColumnMetadata("b", BIGINT),
-                        new ColumnMetadata("x", BIGINT, null, true))),
+                        ColumnMetadata.builder().setName("x").setType(BIGINT).setHidden(true).build())),
                 false));
 
         // table in different catalog
@@ -5361,7 +5361,7 @@ public class TestAnalyzer
         inSetupTransaction(session -> metadata.createTable(session, TPCH_CATALOG,
                 new ConnectorTableMetadata(table5, ImmutableList.of(
                         new ColumnMetadata("a", BIGINT),
-                        new ColumnMetadata("b", BIGINT, null, true))),
+                        ColumnMetadata.builder().setName("b").setType(BIGINT).setHidden(true).build())),
                 false));
 
         // table with a varchar column
@@ -5647,6 +5647,7 @@ public class TestAnalyzer
     {
         StatementRewrite statementRewrite = new StatementRewrite(ImmutableSet.of(new ShowQueriesRewrite(
                 plannerContext.getMetadata(),
+                plannerContext.getFunctionManager(),
                 SQL_PARSER,
                 accessControl,
                 new SessionPropertyManager(),

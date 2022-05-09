@@ -38,6 +38,7 @@ import io.trino.execution.executor.TaskExecutor;
 import io.trino.memory.LocalMemoryManager;
 import io.trino.memory.NodeMemoryConfig;
 import io.trino.memory.QueryContext;
+import io.trino.operator.RetryPolicy;
 import io.trino.spi.QueryId;
 import io.trino.spi.TrinoException;
 import io.trino.spi.VersionEmbedder;
@@ -71,10 +72,11 @@ import static com.google.common.base.Throwables.throwIfUnchecked;
 import static com.google.common.collect.ImmutableList.toImmutableList;
 import static io.airlift.concurrent.Threads.threadsNamed;
 import static io.trino.SystemSessionProperties.getQueryMaxMemoryPerNode;
-import static io.trino.SystemSessionProperties.getQueryMaxTotalMemoryPerTask;
+import static io.trino.SystemSessionProperties.getRetryPolicy;
 import static io.trino.SystemSessionProperties.resourceOvercommit;
 import static io.trino.collect.cache.SafeCaches.buildNonEvictableCache;
 import static io.trino.execution.SqlTask.createSqlTask;
+import static io.trino.operator.RetryPolicy.TASK;
 import static io.trino.spi.StandardErrorCode.ABANDONED_TASK;
 import static io.trino.spi.StandardErrorCode.SERVER_SHUTTING_DOWN;
 import static java.lang.Math.min;
@@ -105,7 +107,6 @@ public class SqlTaskManager
     private final SqlTaskIoStats finishedTaskStats = new SqlTaskIoStats();
 
     private final long queryMaxMemoryPerNode;
-    private final Optional<DataSize> queryMaxMemoryPerTask;
 
     private final CounterStat failedTasks = new CounterStat();
 
@@ -144,13 +145,12 @@ public class SqlTaskManager
         SqlTaskExecutionFactory sqlTaskExecutionFactory = new SqlTaskExecutionFactory(taskNotificationExecutor, taskExecutor, planner, splitMonitor, config);
 
         DataSize maxQueryMemoryPerNode = nodeMemoryConfig.getMaxQueryMemoryPerNode();
-        queryMaxMemoryPerTask = nodeMemoryConfig.getMaxQueryMemoryPerTask();
         DataSize maxQuerySpillPerNode = nodeSpillConfig.getQueryMaxSpillPerNode();
 
         queryMaxMemoryPerNode = maxQueryMemoryPerNode.toBytes();
 
         queryContexts = buildNonEvictableCache(CacheBuilder.newBuilder().weakValues(), CacheLoader.from(
-                queryId -> createQueryContext(queryId, localMemoryManager, localSpillManager, gcMonitor, maxQueryMemoryPerNode, queryMaxMemoryPerTask, maxQuerySpillPerNode)));
+                queryId -> createQueryContext(queryId, localMemoryManager, localSpillManager, gcMonitor, maxQueryMemoryPerNode, maxQuerySpillPerNode)));
 
         tasks = buildNonEvictableCache(CacheBuilder.newBuilder(), CacheLoader.from(
                 taskId -> createSqlTask(
@@ -173,13 +173,11 @@ public class SqlTaskManager
             LocalSpillManager localSpillManager,
             GcMonitor gcMonitor,
             DataSize maxQueryUserMemoryPerNode,
-            Optional<DataSize> maxQueryMemoryPerTask,
             DataSize maxQuerySpillPerNode)
     {
         return new QueryContext(
                 queryId,
                 maxQueryUserMemoryPerNode,
-                maxQueryMemoryPerTask,
                 localMemoryManager.getMemoryPool(),
                 gcMonitor,
                 taskNotificationExecutor,
@@ -399,19 +397,20 @@ public class SqlTaskManager
         SqlTask sqlTask = tasks.getUnchecked(taskId);
         QueryContext queryContext = sqlTask.getQueryContext();
         if (!queryContext.isMemoryLimitsInitialized()) {
-            long sessionQueryMaxMemoryPerNode = getQueryMaxMemoryPerNode(session).toBytes();
-
-            Optional<DataSize> effectiveQueryMaxMemoryPerTask = getQueryMaxTotalMemoryPerTask(session);
-            if (queryMaxMemoryPerTask.isPresent() &&
-                    (effectiveQueryMaxMemoryPerTask.isEmpty() || effectiveQueryMaxMemoryPerTask.get().toBytes() > queryMaxMemoryPerTask.get().toBytes())) {
-                effectiveQueryMaxMemoryPerTask = queryMaxMemoryPerTask;
+            RetryPolicy retryPolicy = getRetryPolicy(session);
+            if (retryPolicy == TASK) {
+                // Memory limit for fault tolerant queries should only be enforced by the MemoryPool.
+                // LowMemoryKiller is responsible for freeing up the MemoryPool if necessary.
+                queryContext.initializeMemoryLimits(false, /* unlimited */ Long.MAX_VALUE);
             }
+            else {
+                long sessionQueryMaxMemoryPerNode = getQueryMaxMemoryPerNode(session).toBytes();
 
-            // Session properties are only allowed to decrease memory limits, not increase them
-            queryContext.initializeMemoryLimits(
-                    resourceOvercommit(session),
-                    min(sessionQueryMaxMemoryPerNode, queryMaxMemoryPerNode),
-                    effectiveQueryMaxMemoryPerTask);
+                // Session properties are only allowed to decrease memory limits, not increase them
+                queryContext.initializeMemoryLimits(
+                        resourceOvercommit(session),
+                        min(sessionQueryMaxMemoryPerNode, queryMaxMemoryPerNode));
+            }
         }
 
         sqlTask.recordHeartbeat();

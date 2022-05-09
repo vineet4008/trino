@@ -134,6 +134,7 @@ public class MockConnector
     private final Optional<ConnectorAccessControl> accessControl;
     private final Function<SchemaTableName, List<List<?>>> data;
     private final Set<Procedure> procedures;
+    private final boolean supportsReportingWrittenBytes;
     private final boolean allowMissingColumnsOnInsert;
     private final Supplier<List<PropertyMetadata<?>>> schemaProperties;
     private final Supplier<List<PropertyMetadata<?>>> tableProperties;
@@ -169,7 +170,8 @@ public class MockConnector
             Set<Procedure> procedures,
             boolean allowMissingColumnsOnInsert,
             Supplier<List<PropertyMetadata<?>>> schemaProperties,
-            Supplier<List<PropertyMetadata<?>>> tableProperties)
+            Supplier<List<PropertyMetadata<?>>> tableProperties,
+            boolean supportsReportingWrittenBytes)
     {
         this.sessionProperties = ImmutableList.copyOf(requireNonNull(sessionProperties, "sessionProperties is null"));
         this.listSchemaNames = requireNonNull(listSchemaNames, "listSchemaNames is null");
@@ -198,6 +200,7 @@ public class MockConnector
         this.accessControl = requireNonNull(accessControl, "accessControl is null");
         this.data = requireNonNull(data, "data is null");
         this.procedures = requireNonNull(procedures, "procedures is null");
+        this.supportsReportingWrittenBytes = supportsReportingWrittenBytes;
         this.allowMissingColumnsOnInsert = allowMissingColumnsOnInsert;
         this.schemaProperties = requireNonNull(schemaProperties, "schemaProperties is null");
         this.tableProperties = requireNonNull(tableProperties, "tableProperties is null");
@@ -418,6 +421,12 @@ public class MockConnector
         {
             MockConnectorColumnHandle mockColumnHandle = (MockConnectorColumnHandle) columnHandle;
             return new ColumnMetadata(mockColumnHandle.getName(), mockColumnHandle.getType());
+        }
+
+        @Override
+        public Map<SchemaTableName, List<ColumnMetadata>> listTableColumns(ConnectorSession session, SchemaTablePrefix prefix)
+        {
+            throw new UnsupportedOperationException("The deprecated listTableColumns is not supported because streamTableColumns is implemented instead");
         }
 
         @Override
@@ -676,6 +685,18 @@ public class MockConnector
         public void revokeTablePrivileges(ConnectorSession session, SchemaTableName tableName, Set<Privilege> privileges, TrinoPrincipal revokee, boolean grantOption)
         {
             getMockAccessControl().revokeTablePrivileges(tableName, privileges, revokee, grantOption);
+        }
+
+        @Override
+        public boolean supportsReportingWrittenBytes(ConnectorSession session, SchemaTableName schemaTableName, Map<String, Object> tableProperties)
+        {
+            return supportsReportingWrittenBytes;
+        }
+
+        @Override
+        public boolean supportsReportingWrittenBytes(ConnectorSession session, ConnectorTableHandle tableHandle)
+        {
+            return supportsReportingWrittenBytes;
         }
 
         private MockConnectorAccessControl getMockAccessControl()
